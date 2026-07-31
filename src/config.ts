@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { z } from "zod";
-import type { AgentRole, ResolvedAgentConfig } from "./types.js";
+import type { AgentRole, ResolvedAgentConfig, AgentConfigOverride, AgentDefaults } from "./types.js";
 
 const EffortSchema = z.enum(["low", "medium", "high", "xhigh", "max"]);
 const ThinkingSchema = z.enum(["adaptive", "disabled"]);
@@ -36,3 +36,10 @@ export function loadConfig(path = "agents.config.json"): Config {
   const raw = JSON.parse(readFileSync(path, "utf8"));
   return ConfigSchema.parse(raw);
 }
+
+// 编译期漂移守卫:若下面的 zod schema 与 types.ts 的手写类型不一致,这里会编译报错
+type AssertEqual<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
+const _defaultsInSync: AssertEqual<z.infer<typeof DefaultsSchema>, AgentDefaults> = true;
+const _overrideInSync: AssertEqual<z.infer<typeof OverrideSchema>, AgentConfigOverride> = true;
+void _defaultsInSync;
+void _overrideInSync;

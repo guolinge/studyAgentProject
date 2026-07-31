@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveAgentConfig, ConfigSchema } from "../src/config.js";
+import { resolveAgentConfig, ConfigSchema, loadConfig } from "../src/config.js";
 
 const raw = {
   defaults: { model: "claude-opus-4-8", effort: "high", maxTokens: 16000, thinking: "adaptive" },
@@ -36,5 +36,13 @@ describe("resolveAgentConfig", () => {
     expect(() =>
       ConfigSchema.parse({ ...raw, defaults: { ...raw.defaults, effort: "turbo" } }),
     ).toThrow();
+  });
+});
+
+describe("loadConfig", () => {
+  it("loads and validates the real agents.config.json from project root", () => {
+    const cfg = loadConfig();
+    expect(cfg.defaults.model).toBe("claude-opus-4-8");
+    expect(Object.keys(cfg.agents)).toContain("contentGeneration");
   });
 });
