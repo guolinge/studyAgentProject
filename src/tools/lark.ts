@@ -20,11 +20,16 @@ export const defaultRunner: CliRunner = (cmd, args) =>
 /** 创建飞书文档,返回文档 URL */
 export async function larkCreateDoc(contentXml: string, runner: CliRunner = defaultRunner): Promise<string> {
   const stdout = await runner("lark-cli", buildCreateDocArgs(contentXml));
-  const parsed = JSON.parse(stdout) as {
+  let parsed: {
     ok?: boolean;
     data?: { document?: { url?: string } };
     error?: { message?: string };
   };
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    throw new Error(`lark-cli 返回非 JSON 输出:${stdout.slice(0, 200)}`);
+  }
   if (!parsed.ok) {
     throw new Error(`飞书创建文档失败:${parsed.error?.message ?? "unknown"}`);
   }

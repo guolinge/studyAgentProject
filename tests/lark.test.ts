@@ -22,4 +22,9 @@ describe("larkCreateDoc", () => {
     const runner = vi.fn().mockResolvedValue(JSON.stringify({ ok: false, error: { message: "boom" } }));
     await expect(larkCreateDoc("<title>T</title>", runner)).rejects.toThrow(/boom/);
   });
+
+  it("throws a clear error when stdout is not JSON", async () => {
+    const runner = vi.fn().mockResolvedValue("Error: lark-cli not authenticated");
+    await expect(larkCreateDoc("<title>T</title>", runner)).rejects.toThrow(/非 JSON/);
+  });
 });
