@@ -45,22 +45,30 @@ async function main() {
     return runAgent(input, cfg, client);
   };
 
-  const result = await runPipeline(userInput, {
-    loadPrompt,
-    runRole,
-    gate: createReadlineAsker(),
-    publish: (markdown) => {
-      if (dryRun) {
-        console.error("\n(dry-run)跳过飞书写入,打印将导入的 Markdown:\n");
-        console.log(markdown);
-        return Promise.resolve("(dry-run:未写入飞书)");
-      }
-      console.error("\n正在写入飞书…");
-      return larkCreateDoc(markdown, "markdown");
-    },
-  });
-
-  console.log("\n✅ 已写入飞书:", result.url);
+  // GATE_AUTOPASS=1:两道门自动通过(无人值守/自动化验证);否则真人 readline 交互
+  const asker =
+    process.env.GATE_AUTOPASS === "1"
+      ? Object.assign(async () => "", { close: () => {} })
+      : createReadlineAsker();
+  try {
+    const result = await runPipeline(userInput, {
+      loadPrompt,
+      runRole,
+      gate: asker,
+      publish: (markdown) => {
+        if (dryRun) {
+          console.error("\n(dry-run)跳过飞书写入,打印将导入的 Markdown:\n");
+          console.log(markdown);
+          return Promise.resolve("(dry-run:未写入飞书)");
+        }
+        console.error("\n正在写入飞书…");
+        return larkCreateDoc(markdown, "markdown");
+      },
+    });
+    console.log("\n✅ 已写入飞书:", result.url);
+  } finally {
+    asker.close(); // 释放 stdin,让进程退出
+  }
 }
 
 main().catch((err) => {
