@@ -8,7 +8,7 @@ import { tavilySearch, formatSearchContext } from "./tools/tavily.js";
 import { runPipeline } from "./orchestrator.js";
 import { createReadlineAsker } from "./io.js";
 import { renderDiagrams, patchDiagrams } from "./diagrams.js";
-import type { AgentInput, AgentRole } from "./types.js";
+import type { AgentInput, AgentRole, ResolvedAgentConfig } from "./types.js";
 
 const ROLE_LABEL: Record<AgentRole, string> = {
   questionAnalysis: "问题分析",
@@ -42,9 +42,18 @@ async function main() {
   const dryRun = process.env.LARK_DRY_RUN === "1";
   const noDiagram = process.env.NO_DIAGRAM === "1";
 
+  // 测试省钱:MODEL_OVERRIDE / EFFORT_OVERRIDE 覆盖所有 agent 的模型/effort(不改正式 config)
+  const modelOverride = process.env.MODEL_OVERRIDE;
+  const effortOverride = process.env.EFFORT_OVERRIDE as ResolvedAgentConfig["effort"] | undefined;
+
   // 按角色取配置调 runAgent(复用同一 streaming client)
   const runRole = (role: AgentRole, input: AgentInput) => {
-    const cfg = resolveAgentConfig(config, role);
+    const base = resolveAgentConfig(config, role);
+    const cfg: ResolvedAgentConfig = {
+      ...base,
+      model: modelOverride || base.model,
+      effort: effortOverride || base.effort,
+    };
     console.error(`  → [${ROLE_LABEL[role]}] 运行中(model=${cfg.model}, effort=${cfg.effort})…`);
     return runAgent(input, cfg, client);
   };
