@@ -20,6 +20,7 @@
  *   DEDUP_CHOICE=N        配合 GATE_AUTOPASS,查重门自动选第 N 篇合并
  *   MODEL_OVERRIDE        覆盖所有 agent 的模型(测试省 token 用)
  *   EFFORT_OVERRIDE       覆盖所有 agent 的 effort
+ *   INDEX_DOC_TOKEN       总索引文档 token;设置后每次 publish 自动追加一行
  */
 
 import "dotenv/config";
@@ -33,6 +34,7 @@ import {
   larkSearchDocs,
   larkFetchOutline,
   larkBlockInsertAfter,
+  larkAppendToDoc,
   type SearchHit,
 } from "./tools/lark.js";
 import { tavilySearch, formatSearchContext } from "./tools/tavily.js";
@@ -155,6 +157,20 @@ async function main() {
         )
       : createReadlineAsker();
 
+  // 总索引更新:publish 后自动追加一行 |标题|分类|链接|日期|
+  // dryRun 或未配 INDEX_DOC_TOKEN 时跳过
+  const indexDocToken = process.env.INDEX_DOC_TOKEN;
+  const updateIndex =
+    dryRun || !indexDocToken
+      ? undefined
+      : async (title: string, url: string) => {
+          const date = new Date().toISOString().split("T")[0];
+          const category = userInput.length > 20 ? userInput.slice(0, 20) + "…" : userInput;
+          const row = `| ${title} | ${category} | [链接](${url}) | ${date} |\n`;
+          console.error("  📑 正在更新总索引…");
+          await larkAppendToDoc(indexDocToken, row);
+        };
+
   try {
     const result = await runPipeline(userInput, {
       loadPrompt,
@@ -162,6 +178,7 @@ async function main() {
       gate: asker,
       search,
       dedup,
+      updateIndex,
       /**
        * publish:流水线完成后把最终 Markdown 写入飞书。
        *

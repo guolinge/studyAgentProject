@@ -39,6 +39,7 @@ export interface PipelineDeps {
     search: (keyword: string) => Promise<SearchHit[]>; // 查重搜索
     merge: (userInput: string, target: SearchHit) => Promise<{ url: string; incrementalMarkdown: string }>;
   };
+  updateIndex?: (title: string, url: string) => Promise<void>; // 每次 publish 后追加总索引一行
 }
 
 export interface PipelineResult {
@@ -170,5 +171,15 @@ export async function runPipeline(userInput: string, deps: PipelineDeps): Promis
   }
 
   const url = await deps.publish(markdown);
+
+  if (deps.updateIndex) {
+    const title = extractTitle(markdown, userInput);
+    try {
+      await deps.updateIndex(title, url);
+    } catch (e) {
+      console.error(`  ⚠ 索引更新失败,跳过:${(e as Error).message}`);
+    }
+  }
+
   return { url, markdown, skeleton, feedbacks };
 }

@@ -235,6 +235,40 @@ export function buildBlockInsertAfterArgs(docUrl: string, blockId: string, forma
   ];
 }
 
+// ── 末尾追加 ──────────────────────────────────────────────────────────────────
+
+/** 构造 `docs +update --command append` argv;内容从 stdin 读。 */
+export function buildAppendToDocArgs(docToken: string): string[] {
+  return [
+    "docs",
+    "+update",
+    "--doc", docToken,
+    "--command", "append",
+    "--doc-format", "markdown",
+    "--content", "-",
+    "--as", "user",
+  ];
+}
+
+/**
+ * 把 Markdown 内容追加到文档末尾。
+ * 用于总索引文档追加新发布的文档行:`| 标题 | 分类 | [链接](url) | 日期 |`。
+ */
+export async function larkAppendToDoc(
+  docToken: string,
+  content: string,
+  runner: CliRunner = defaultRunner,
+): Promise<void> {
+  const stdout = await runner("lark-cli", buildAppendToDocArgs(docToken), content);
+  let parsed: { ok?: boolean; error?: { message?: string } };
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    throw new Error(`lark-cli 返回非 JSON 输出:${stdout.slice(0, 200)}`);
+  }
+  if (!parsed.ok) throw new Error(`飞书追加内容失败:${parsed.error?.message ?? "unknown"}`);
+}
+
 /**
  * 在指定 block 之后插入 Markdown 内容。
  * 用于把增量(新小节)插到旧文某个标题锚点后,而不是追加到文档末尾。
