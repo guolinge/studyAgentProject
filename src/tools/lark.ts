@@ -1,25 +1,39 @@
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 
-/** 构造 `lark-cli docs +create` 的 argv(不含 lark-cli 本身) */
-export function buildCreateDocArgs(contentXml: string): string[] {
-  return ["docs", "+create", "--content", contentXml, "--as", "user"];
+export type DocFormat = "xml" | "markdown";
+
+/** 构造 `lark-cli docs +create` 的 argv;内容从 stdin 读(--content -,避开 shell 转义) */
+export function buildCreateDocArgs(format: DocFormat = "markdown"): string[] {
+  return ["docs", "+create", "--doc-format", format, "--content", "-", "--as", "user"];
 }
 
-// 注入型执行器:给定命令与参数,返回 stdout 字符串
-export type CliRunner = (cmd: string, args: string[]) => Promise<string>;
+// 注入型执行器:命令 + argv + 可选 stdin,返回 stdout 字符串
+export type CliRunner = (cmd: string, args: string[], stdin?: string) => Promise<string>;
 
-/** 默认执行器:真正 spawn lark-cli */
-export const defaultRunner: CliRunner = (cmd, args) =>
+/** 默认执行器:spawn 进程,把 content 写入 stdin 后收集 stdout */
+export const defaultRunner: CliRunner = (cmd, args, stdin) =>
   new Promise((resolve, reject) => {
-    execFile(cmd, args, { maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
-      if (err) return reject(new Error(`${cmd} 执行失败:${stderr || err.message}`));
+    const child = spawn(cmd, args, { stdio: ["pipe", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (d) => (stdout += d));
+    child.stderr.on("data", (d) => (stderr += d));
+    child.on("error", (err) => reject(new Error(`${cmd} 执行失败:${err.message}`)));
+    child.on("close", (code) => {
+      if (code !== 0) return reject(new Error(`${cmd} 执行失败(exit ${code}):${stderr || stdout}`));
       resolve(stdout);
     });
+    if (stdin !== undefined) child.stdin.write(stdin);
+    child.stdin.end();
   });
 
-/** 创建飞书文档,返回文档 URL */
-export async function larkCreateDoc(contentXml: string, runner: CliRunner = defaultRunner): Promise<string> {
-  const stdout = await runner("lark-cli", buildCreateDocArgs(contentXml));
+/** 创建飞书文档,返回文档 URL。content 经 stdin 传入,默认 markdown 格式 */
+export async function larkCreateDoc(
+  content: string,
+  format: DocFormat = "markdown",
+  runner: CliRunner = defaultRunner,
+): Promise<string> {
+  const stdout = await runner("lark-cli", buildCreateDocArgs(format), content);
   let parsed: {
     ok?: boolean;
     data?: { document?: { url?: string } };
