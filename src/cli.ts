@@ -16,7 +16,9 @@ import { runPipeline } from "./orchestrator.js";
 import { createReadlineAsker } from "./io.js";
 import { renderDiagrams, patchDiagrams } from "./diagrams.js";
 import { mergeIntoDoc } from "./merge.js";
+import { runDistiller, applyChange, formatChangesForApproval } from "./distiller.js";
 import type { AgentInput, AgentRole, ResolvedAgentConfig } from "./types.js";
+import { execSync } from "node:child_process";
 
 const ROLE_LABEL: Record<AgentRole, string> = {
   questionAnalysis: "问题分析",
@@ -50,6 +52,7 @@ async function main() {
 
   const dryRun = process.env.LARK_DRY_RUN === "1";
   const noDiagram = process.env.NO_DIAGRAM === "1";
+  const noDistiller = process.env.NO_DISTILLER === "1";
 
   // 测试省钱:MODEL_OVERRIDE / EFFORT_OVERRIDE 覆盖所有 agent 的模型/effort(不改正式 config)
   const modelOverride = process.env.MODEL_OVERRIDE;
@@ -147,6 +150,48 @@ async function main() {
       },
     });
     console.log("\n✅ 已写入飞书:", result.url);
+
+    // 蒸馏:有门反馈时自动运行,让 prompt 越用越懂用户
+    if (!noDistiller && result.feedbacks.length > 0) {
+      console.error(`\n🧪 发现 ${result.feedbacks.length} 条门反馈,正在运行蒸馏器…`);
+      let changes: import("./distiller.js").ProposedChange[];
+      try {
+        changes = await runDistiller(result.feedbacks, { loadPrompt, runRole });
+      } catch (e) {
+        console.error(`  ⚠ 蒸馏器运行失败,跳过:${(e as Error).message}`);
+        changes = [];
+      }
+      if (changes.length === 0) {
+        console.error("  → 无规律性改动建议,跳过。");
+      } else {
+        const display = formatChangesForApproval(changes);
+        const reply = await asker("🧪 蒸馏结果 · 批准后写回 prompts/", display);
+        if (reply.toLowerCase() === "n" || reply.toLowerCase() === "no") {
+          console.error("  → 已跳过全部蒸馏变更。");
+        } else {
+          const projectRoot = new URL("..", import.meta.url).pathname;
+          let applied = 0;
+          for (const change of changes) {
+            try {
+              applyChange(change, projectRoot);
+              execSync(`git add ${JSON.stringify(change.file)}`, { cwd: projectRoot });
+              applied++;
+              console.error(`  ✅ 已应用:${change.file}`);
+            } catch (e) {
+              console.error(`  ⚠ 应用失败(${change.file}):${(e as Error).message}`);
+            }
+          }
+          if (applied > 0) {
+            const summary = changes.map((c) => c.file.replace("prompts/", "").replace(".md", "")).join(", ");
+            execSync(
+              `git commit -m "chore(distiller): 蒸馏规则 [${summary}]"`,
+              { cwd: projectRoot },
+            );
+            console.error(`  🎉 规则已提交:chore(distiller): 蒸馏规则 [${summary}]`);
+          }
+        }
+      }
+    }
   } finally {
     asker.close(); // 释放 stdin,让进程退出
   }
