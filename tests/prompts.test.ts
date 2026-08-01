@@ -16,4 +16,22 @@ describe("loadPrompt", () => {
   it("throws a clear error for a missing prompt", () => {
     expect(() => loadPrompt("does-not-exist")).toThrow(/prompt.*does-not-exist/i);
   });
+
+  it("loads question-analysis content", () => {
+    const text = loadPrompt("question-analysis");
+    expect(text).toContain("问题分析");
+    expect(text).toContain("一级");
+  });
+
+  it("loads content-organization content", () => {
+    const text = loadPrompt("content-organization");
+    expect(text).toContain("内容组织");
+    expect(text).toContain("表达形式");
+  });
+
+  it("loads content-review content", () => {
+    const text = loadPrompt("content-review");
+    expect(text).toContain("检查清单");
+    expect(text).toMatch(/PASS/);
+  });
 });
