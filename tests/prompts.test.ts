@@ -36,4 +36,16 @@ describe("loadPrompt", () => {
     expect(text).toContain("检查清单");
     expect(text).toMatch(/PASS/);
   });
+
+  it("loads drawing-rules content", () => {
+    const text = loadPrompt("drawing-rules");
+    expect(text).toContain("viewBox");
+    expect(text).toContain("自包含");
+  });
+
+  it("loads diagram-svg content", () => {
+    const text = loadPrompt("diagram-svg");
+    expect(text).toContain("SVG");
+    expect(text).toContain("配图指令");
+  });
 });

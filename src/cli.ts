@@ -14,6 +14,7 @@ const ROLE_LABEL: Record<AgentRole, string> = {
   contentOrganization: "内容组织",
   contentGeneration: "内容生成",
   contentReview: "内容审核",
+  diagramSvg: "SVG作图",
   distiller: "沉淀",
 };
 

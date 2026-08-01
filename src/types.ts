@@ -4,6 +4,7 @@ export type AgentRole =
   | "contentOrganization"
   | "contentGeneration"
   | "contentReview"
+  | "diagramSvg"
   | "distiller";
 
 // 配置文件里单个 agent 可覆盖的字段(全部可选)
