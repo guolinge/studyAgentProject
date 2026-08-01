@@ -7,6 +7,7 @@ import { larkCreateDoc } from "./tools/lark.js";
 import { tavilySearch, formatSearchContext } from "./tools/tavily.js";
 import { runPipeline } from "./orchestrator.js";
 import { createReadlineAsker } from "./io.js";
+import { renderDiagrams } from "./diagrams.js";
 import type { AgentInput, AgentRole } from "./types.js";
 
 const ROLE_LABEL: Record<AgentRole, string> = {
@@ -39,6 +40,7 @@ async function main() {
   };
 
   const dryRun = process.env.LARK_DRY_RUN === "1";
+  const noDiagram = process.env.NO_DIAGRAM === "1";
 
   // 按角色取配置调 runAgent(复用同一 streaming client)
   const runRole = (role: AgentRole, input: AgentInput) => {
@@ -69,14 +71,20 @@ async function main() {
       runRole,
       gate: asker,
       search,
-      publish: (markdown) => {
+      publish: async (markdown) => {
+        // 把 markdown 里的【配图指令】渲染成飞书画板 SVG(失败的降级为文字占位)
+        let md = markdown;
+        if (!noDiagram) {
+          console.error("\n正在生成配图(SVG)…");
+          md = await renderDiagrams(markdown, { loadPrompt, runRole });
+        }
         if (dryRun) {
-          console.error("\n(dry-run)跳过飞书写入,打印将导入的 Markdown:\n");
-          console.log(markdown);
-          return Promise.resolve("(dry-run:未写入飞书)");
+          console.error("\n(dry-run)跳过飞书写入,打印将导入的内容:\n");
+          console.log(md);
+          return "(dry-run:未写入飞书)";
         }
         console.error("\n正在写入飞书…");
-        return larkCreateDoc(markdown, "markdown");
+        return larkCreateDoc(md, "markdown");
       },
     });
     console.log("\n✅ 已写入飞书:", result.url);
