@@ -25,3 +25,20 @@ export async function searchDuplicates(keywords: string[], deps: DedupDeps): Pro
   }
   return [...byToken.values()];
 }
+
+export type GateChoice = { action: "merge"; target: SearchHit } | { action: "new" };
+
+/** 查重门展示文本:列出候选(1-based 序号 + 标题 + url) */
+export function formatDedupPrompt(candidates: SearchHit[]): string {
+  const lines = candidates.map((c, i) => `${i + 1}. ${c.title}\n   ${c.url}`);
+  return `发现可能相关的旧文档:\n${lines.join("\n")}\n\n输入序号=合并进该篇;回车=新建独立文档。`;
+}
+
+/** 解析查重门输入:范围内数字序号→合并该候选;空/非数字/越界→新建 */
+export function parseGateChoice(reply: string, candidates: SearchHit[]): GateChoice {
+  const n = Number.parseInt(reply.trim(), 10);
+  if (Number.isInteger(n) && n >= 1 && n <= candidates.length) {
+    return { action: "merge", target: candidates[n - 1] };
+  }
+  return { action: "new" };
+}
