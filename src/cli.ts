@@ -105,10 +105,13 @@ async function main() {
           },
         };
 
-  // GATE_AUTOPASS=1:两道门自动通过(无人值守/自动化验证);否则真人 readline 交互
+  // GATE_AUTOPASS=1:门自动通过(无人值守/自动化验证);查重门返回 DEDUP_CHOICE(默认""=新建,设序号=合并该篇)
   const asker =
     process.env.GATE_AUTOPASS === "1"
-      ? Object.assign(async () => "", { close: () => {} })
+      ? Object.assign(
+          async (title: string) => (title.includes("查重") ? process.env.DEDUP_CHOICE ?? "" : ""),
+          { close: () => {} },
+        )
       : createReadlineAsker();
   try {
     const result = await runPipeline(userInput, {
