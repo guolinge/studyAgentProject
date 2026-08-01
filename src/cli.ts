@@ -4,6 +4,7 @@ import { loadConfig, resolveAgentConfig } from "./config.js";
 import { loadPrompt } from "./prompts.js";
 import { runAgent, type ModelClient } from "./agentRunner.js";
 import { larkCreateDoc } from "./tools/lark.js";
+import { tavilySearch, formatSearchContext } from "./tools/tavily.js";
 import { runPipeline } from "./orchestrator.js";
 import { createReadlineAsker } from "./io.js";
 import type { AgentInput, AgentRole } from "./types.js";
@@ -45,6 +46,17 @@ async function main() {
     return runAgent(input, cfg, client);
   };
 
+  // 联网搜索:走网关 Tavily 透明代理;NO_SEARCH=1 或没配 BASE_URL 时跳过
+  const base = process.env.ANTHROPIC_BASE_URL || "";
+  const search =
+    process.env.NO_SEARCH === "1" || !base
+      ? undefined
+      : async (query: string) => {
+          console.error("  🔍 正在联网搜索…");
+          const r = await tavilySearch(query, { base, apiKey: process.env.ANTHROPIC_API_KEY ?? "" });
+          return formatSearchContext(r);
+        };
+
   // GATE_AUTOPASS=1:两道门自动通过(无人值守/自动化验证);否则真人 readline 交互
   const asker =
     process.env.GATE_AUTOPASS === "1"
@@ -55,6 +67,7 @@ async function main() {
       loadPrompt,
       runRole,
       gate: asker,
+      search,
       publish: (markdown) => {
         if (dryRun) {
           console.error("\n(dry-run)跳过飞书写入,打印将导入的 Markdown:\n");
