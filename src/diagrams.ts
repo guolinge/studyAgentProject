@@ -82,14 +82,23 @@ export async function patchDiagrams(
   const specs = extractDiagramSpecs(markdown);
   const context = markdown.replace(SPEC_RE, "").trim();
   let patched = 0;
-  for (let i = 0; i < specs.length; i++) {
-    const spec = specs[i];
-    deps.onProgress?.(`  🎨 补图 ${i + 1}/${specs.length}:${spec.instruction}`);
-    const svg = await renderDiagram(spec, context, deps);
-    if (svg) {
-      await deps.updateDoc(docUrl, spec.raw, `<whiteboard type="svg">${svg}</whiteboard>`);
-      patched++;
-    }
-  }
+  // 并行生成所有图;哪张先画完就先排进串行 update 队列补到飞书(不等其他图)。
+  // update 串行:避免多次并发改同一文档产生 revision 冲突。
+  let updateChain: Promise<void> = Promise.resolve();
+  const renders = specs.map((spec, i) =>
+    renderDiagram(spec, context, deps).then((svg) => {
+      if (!svg) {
+        deps.onProgress?.(`  ⚠ 第 ${i + 1}/${specs.length} 张校验未过,保留文字占位:${spec.instruction}`);
+        return;
+      }
+      updateChain = updateChain.then(async () => {
+        await deps.updateDoc(docUrl, spec.raw, `<whiteboard type="svg">${svg}</whiteboard>`);
+        patched++;
+        deps.onProgress?.(`  ✅ 已补 ${patched}/${specs.length} 张:${spec.instruction}`);
+      });
+    }),
+  );
+  await Promise.all(renders); // 等所有图生成
+  await updateChain; // 等所有补图 update 完成
   return { total: specs.length, patched };
 }
