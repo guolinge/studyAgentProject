@@ -11,6 +11,8 @@ describe("loadPrompt", () => {
   it("loads content-generation content", () => {
     const text = loadPrompt("content-generation");
     expect(text).toContain("内容生成");
+    expect(text).toContain("搜索结果");
+    expect(text).toContain("来源");
   });
 
   it("throws a clear error for a missing prompt", () => {
