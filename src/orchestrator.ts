@@ -1,3 +1,22 @@
+/**
+ * orchestrator.ts — 流水线编排核心
+ *
+ * 完整流程:
+ *   问题分析 →门1→ [查重分流] → 联网搜索 → 内容组织 →门2→ 内容生成 →审核→ publish
+ *
+ * 查重分流(有 dedup 依赖时):
+ *   - 提取查重关键词 → 搜索相关旧文档
+ *   - 有候选 → 弹查重门 → 选合并 → mergeIntoDoc → 提前返回(不走新建流程)
+ *   - 选新建 / 无候选 → 继续正常流程
+ *
+ * 门机制(iterateWithGate):
+ *   - 用户回车 = 通过,返回当前产出
+ *   - 用户输入意见 = 把意见拼进 user prompt 重跑,循环直到通过
+ *   - 每次非空反馈通过 collector 回调收集,最终在 PipelineResult.feedbacks 里返回
+ *
+ * 所有依赖通过 PipelineDeps 注入,单测时可替换所有副作用。
+ */
+
 import type { AgentInput, AgentRole, GateFeedback } from "./types.js";
 import type { Asker } from "./io.js";
 import type { SearchHit } from "./tools/lark.js";
@@ -12,13 +31,12 @@ export function extractTitle(markdown: string, fallback: string): string {
 export interface PipelineDeps {
   loadPrompt: (name: string) => string;
   runRole: (role: AgentRole, input: AgentInput) => Promise<string>;
-  gate: Asker; // 两道门共用
-  publish: (markdown: string) => Promise<string>;
+  gate: Asker;              // 门1/门2/查重门共用同一个 Asker 实例
+  publish: (markdown: string) => Promise<string>; // 写飞书,返回文档 URL
   reviewMaxRetries?: number; // 审核打回上限,默认 2
-  search?: (query: string) => Promise<string>; // 联网搜索,返回已格式化的上下文;不传则跳过
+  search?: (query: string) => Promise<string>;    // 联网搜索,返回已格式化上下文;不传则跳过
   dedup?: {
-    // 查重:按关键词搜本人旧文档;merge:把新知识增量合并进选中的旧文档,返回其 url + 增量
-    search: (keyword: string) => Promise<SearchHit[]>;
+    search: (keyword: string) => Promise<SearchHit[]>; // 查重搜索
     merge: (userInput: string, target: SearchHit) => Promise<{ url: string; incrementalMarkdown: string }>;
   };
 }
@@ -27,10 +45,13 @@ export interface PipelineResult {
   url: string;
   markdown: string;
   skeleton: string;
-  feedbacks: GateFeedback[]; // 各道门中用户给出的非空修改意见
+  feedbacks: GateFeedback[]; // 各道门中用户给出的非空修改意见,供 Distiller 使用
 }
 
-/** 拼 system:角色 prompt(+ 可选附上 style-rules) */
+/**
+ * 拼 system prompt:角色文件(+ 可选附上 style-rules)。
+ * 内容组织/内容生成需要 style-rules 约束写作风格;问题分析/审核不需要。
+ */
 function buildSystem(loadPrompt: PipelineDeps["loadPrompt"], roleFile: string, withRules: boolean): string {
   const role = loadPrompt(roleFile);
   if (!withRules) return role;
@@ -38,9 +59,16 @@ function buildSystem(loadPrompt: PipelineDeps["loadPrompt"], roleFile: string, w
 }
 
 /**
- * 门迭代:跑 role 产出 → 展示给使用者 → 拿反馈。
- * 空反馈=通过,返回产出;非空=把反馈拼进 user 重跑,循环到通过。
- * collector 可选:每次非空反馈都调用一次,用于 Distiller 收集。
+ * 门迭代:跑 role → 展示 → 收反馈。
+ *
+ * 循环逻辑:
+ *   - gate 返回 "" → 通过,返回当前产出
+ *   - gate 返回非空 → 把反馈拼进 user,记录到 collector,重跑 role
+ *
+ * baseUser 不变(保留原始任务上下文);每次迭代新 user 追加上一版产出 + 修改意见,
+ * 让 agent 在看到完整历史的基础上修改。
+ *
+ * collector 可选,用于 Distiller:把每次非空反馈记录到 feedbacks 数组。
  */
 async function iterateWithGate(
   deps: PipelineDeps,
@@ -53,27 +81,32 @@ async function iterateWithGate(
   let output = await deps.runRole(role, { system, user: baseUser });
   for (;;) {
     const reply = await deps.gate(gateTitle, output);
-    if (reply === "") return output;
-    collector?.({ gate: gateTitle, feedback: reply });
+    if (reply === "") return output; // 通过
+    collector?.({ gate: gateTitle, feedback: reply }); // 记录非空反馈
     const user = `${baseUser}\n\n【上一版产出】\n${output}\n\n【使用者修改意见】\n${reply}\n\n请据此修改后重新输出(保持同样的格式)。`;
     output = await deps.runRole(role, { system, user });
   }
 }
 
 /**
- * 完整流水线:问题分析 →门1→ 内容组织 →门2→ 内容生成 →审核打回→ 写飞书。
- * 上游产出顺流水线下传;两道门"展示+文字反馈迭代";审核 FAIL 打回重生成(有上限)。
+ * 完整流水线。
+ *
+ * 内容审核打回机制:
+ *   contentReview agent 输出 "PASS" 则继续;输出 "FAIL ..." 则把问题拼进 user 重跑
+ *   contentGeneration,最多 maxRetries 次。超出上限直接 publish(避免无限循环)。
  */
 export async function runPipeline(userInput: string, deps: PipelineDeps): Promise<PipelineResult> {
   const maxRetries = deps.reviewMaxRetries ?? 2;
-  const feedbacks: GateFeedback[] = [];
+  const feedbacks: GateFeedback[] = []; // 收集所有门的非空反馈
   const collect = (f: GateFeedback) => feedbacks.push(f);
 
   // ① 问题分析 →门1(轻):确认范围/意图
   const qaSystem = buildSystem(deps.loadPrompt, "question-analysis", false);
-  const outline1 = await iterateWithGate(deps, "questionAnalysis", "门1 · 确认范围/意图", qaSystem, userInput, collect);
+  const outline1 = await iterateWithGate(
+    deps, "questionAnalysis", "门1 · 确认范围/意图", qaSystem, userInput, collect,
+  );
 
-  // 查重分流:搜本人相关旧文档 → 有候选才弹查重门 → 选合并则走 mergeIntoDoc 提前返回
+  // 查重分流:从问题分析产出里提取关键词 → 搜旧文 → 有候选才弹查重门
   if (deps.dedup) {
     const keywords = parseDedupKeywords(outline1);
     const candidates = keywords.length
@@ -85,15 +118,18 @@ export async function runPipeline(userInput: string, deps: PipelineDeps): Promis
       if (choice.action === "merge") {
         try {
           const { url, incrementalMarkdown } = await deps.dedup.merge(userInput, choice.target);
+          // 合并成功:提前返回旧文档的 url,不走新建流程
           return { url, markdown: incrementalMarkdown, skeleton: "", feedbacks };
         } catch (e) {
+          // 合并失败:打印警告,降级继续新建流程(不丢用户的研究内容)
           console.error(`  ⚠ 合并失败,降级为新建:${(e as Error).message}`);
         }
       }
     }
   }
 
-  // 联网搜索:搜一次(用用户输入作 query),结果顺流水线下传;失败则优雅降级
+  // 联网搜索:搜一次,结果顺流水线下传(注入到组织和生成的 user prompt)
+  // 失败时优雅降级:不中断流水线,只是生成内容不含最新资料
   let searchContext = "";
   if (deps.search) {
     try {
@@ -103,14 +139,17 @@ export async function runPipeline(userInput: string, deps: PipelineDeps): Promis
       searchContext = "";
     }
   }
+  // 工具函数:有搜索结果时追加到 base 末尾;没有时原样返回
   const withSearch = (base: string) => (searchContext ? `${base}\n\n${searchContext}` : base);
 
   // ② 内容组织 →门2(重):确认三级骨架(输入含问题分析产出 + 搜索结果)
   const orgSystem = buildSystem(deps.loadPrompt, "content-organization", true);
   const orgUser = withSearch(`${userInput}\n\n【已确认的范围与意图】\n${outline1}`);
-  const skeleton = await iterateWithGate(deps, "contentOrganization", "门2 · 确认骨架", orgSystem, orgUser, collect);
+  const skeleton = await iterateWithGate(
+    deps, "contentOrganization", "门2 · 确认骨架", orgSystem, orgUser, collect,
+  );
 
-  // ③ 内容生成(输入含骨架 + 搜索结果)
+  // ③ 内容生成(输入含骨架 + 搜索结果;maxTokens=32000 所以必须用 streaming)
   const genSystem = buildSystem(deps.loadPrompt, "content-generation", true);
   const genUser = withSearch(`${userInput}\n\n【已确认的骨架】\n${skeleton}`);
   let markdown = await deps.runRole("contentGeneration", { system: genSystem, user: genUser });
@@ -122,7 +161,8 @@ export async function runPipeline(userInput: string, deps: PipelineDeps): Promis
       system: reviewSystem,
       user: `【骨架】\n${skeleton}\n\n【正文】\n${markdown}`,
     });
-    if (/^\s*PASS/.test(verdict)) break;
+    if (/^\s*PASS/.test(verdict)) break; // 通过,退出审核循环
+    // 把审核问题拼进 user,让生成 agent 针对性修补
     markdown = await deps.runRole("contentGeneration", {
       system: genSystem,
       user: `${genUser}\n\n【上一版正文】\n${markdown}\n\n【审核问题】\n${verdict}\n\n请修补后重新输出完整正文。`,

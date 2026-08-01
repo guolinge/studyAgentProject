@@ -1,16 +1,39 @@
+/**
+ * tools/lark.ts — 飞书 CLI(lark-cli / ft-lark-cli)的封装
+ *
+ * 所有飞书操作通过注入的 CliRunner 执行,不直接调用 shell。
+ * 这样测试时传 fake runner 即可,不依赖真实的 lark-cli 安装。
+ *
+ * 内容为什么走 stdin(--content -)而不是参数:
+ *   Markdown/XML/SVG 内容可能含特殊字符(引号、反斜杠、换行),
+ *   通过命令行参数传递需要复杂的 shell 转义;stdin 完全绕开这个问题。
+ *   spawn 比 execFile 更方便写入 stdin(可以直接 child.stdin.write)。
+ *
+ * 模块分三组能力:
+ *   1. 创建文档(+create)
+ *   2. 更新文档(+update str_replace)
+ *   3. 查重/读大纲/锚点插入(Plan 2d 新增)
+ */
+
 import { spawn } from "node:child_process";
 
 export type DocFormat = "xml" | "markdown";
 
-/** 构造 `lark-cli docs +create` 的 argv;内容从 stdin 读(--content -,避开 shell 转义) */
-export function buildCreateDocArgs(format: DocFormat = "markdown"): string[] {
-  return ["docs", "+create", "--doc-format", format, "--content", "-", "--as", "user"];
-}
+// ── 执行器 ────────────────────────────────────────────────────────────────────
 
-// 注入型执行器:命令 + argv + 可选 stdin,返回 stdout 字符串
+/**
+ * 注入型执行器接口:给定命令 + argv + 可选 stdin,返回 stdout 字符串。
+ * 测试里用 vi.fn() 替代,无需安装真实 lark-cli。
+ */
 export type CliRunner = (cmd: string, args: string[], stdin?: string) => Promise<string>;
 
-/** 默认执行器:spawn 进程,把 content 写入 stdin 后收集 stdout */
+/**
+ * 默认执行器:spawn 子进程,把 content 写入 stdin,收集 stdout。
+ *
+ * 用 spawn 而非 execFile 的原因:execFile 不方便在进程启动后写入 stdin,
+ * 而 spawn 的 stdio: ["pipe",...] 返回可写的 child.stdin 流。
+ * stderr 也收集起来,方便在进程以非 0 退出时拼进错误信息。
+ */
 export const defaultRunner: CliRunner = (cmd, args, stdin) =>
   new Promise((resolve, reject) => {
     const child = spawn(cmd, args, { stdio: ["pipe", "pipe", "pipe"] });
@@ -24,10 +47,22 @@ export const defaultRunner: CliRunner = (cmd, args, stdin) =>
       resolve(stdout);
     });
     if (stdin !== undefined) child.stdin.write(stdin);
-    child.stdin.end();
+    child.stdin.end(); // 必须 end(),否则子进程一直等 stdin 而不退出
   });
 
-/** 创建飞书文档,返回文档 URL。content 经 stdin 传入,默认 markdown 格式 */
+// ── 创建文档 ──────────────────────────────────────────────────────────────────
+
+/** 构造 `lark-cli docs +create` 的 argv;内容从 stdin 读(--content -,避开 shell 转义) */
+export function buildCreateDocArgs(format: DocFormat = "markdown"): string[] {
+  return ["docs", "+create", "--doc-format", format, "--content", "-", "--as", "user"];
+}
+
+/**
+ * 创建飞书文档,返回文档 URL。
+ *
+ * content 经 stdin 传入,默认 markdown 格式(飞书会把 # ## ### 等渲染成原生标题块)。
+ * 解析 JSON 响应;ok 为 false 时抛出含 error.message 的错误。
+ */
 export async function larkCreateDoc(
   content: string,
   format: DocFormat = "markdown",
@@ -52,27 +87,31 @@ export async function larkCreateDoc(
   return url;
 }
 
-/** 构造 `docs +update --command str_replace` 的 argv;替换内容从 stdin 读 */
+// ── 更新文档(str_replace) ─────────────────────────────────────────────────────
+
+/**
+ * 构造 `docs +update --command str_replace` 的 argv。
+ * str_replace 把文档里第一个匹配 pattern 的文本块替换成 content(stdin 传入)。
+ * 用途:把【配图指令:...】占位文本替换成 <whiteboard type="svg">...</whiteboard> 画板块。
+ * 默认 xml 格式,因为 <whiteboard> 是飞书原生 XML 标签而非 Markdown 语法。
+ */
 export function buildUpdateStrReplaceArgs(docUrl: string, pattern: string, format: DocFormat = "xml"): string[] {
   return [
     "docs",
     "+update",
-    "--doc",
-    docUrl,
-    "--command",
-    "str_replace",
-    "--pattern",
-    pattern,
-    "--content",
-    "-",
-    "--doc-format",
-    format,
-    "--as",
-    "user",
+    "--doc", docUrl,
+    "--command", "str_replace",
+    "--pattern", pattern,
+    "--content", "-",
+    "--doc-format", format,
+    "--as", "user",
   ];
 }
 
-/** 用 str_replace 把文档里的 pattern 文本替换成 content(如把配图占位换成画板) */
+/**
+ * 用 str_replace 把文档里的 pattern 文本替换成 content。
+ * 典型用途:把配图占位符替换成飞书画板 SVG。
+ */
 export async function larkUpdateStrReplace(
   docUrl: string,
   pattern: string,
@@ -91,17 +130,17 @@ export async function larkUpdateStrReplace(
   }
 }
 
-// ── 查重去重合并(Plan 2d)所需的读/写能力 ──────────────────────
+// ── 查重去重合并 ──────────────────────────────────────────────────────────────
 
 export interface SearchOpts {
-  mine?: boolean; // --mine:锁定本人知识库(查重必开,否则召回别人同名文档)
-  onlyTitle?: boolean; // --only-title:标题精准匹配
+  mine?: boolean;      // --mine:锁定本人知识库。查重必须开启,否则会召回全租户同名文档
+  onlyTitle?: boolean; // --only-title:只搜标题,精准判断"是否已有此主题"
 }
 
 export interface SearchHit {
-  title: string;
-  url: string;
-  token: string;
+  title: string; // 去掉 <h> 高亮标签后的文档标题
+  url: string;   // 文档 URL,用于 fetch outline / block_insert_after
+  token: string; // 文档唯一标识,用于去重(多个关键词命中同一篇时只保留一条)
 }
 
 /** 构造 `drive +search` argv(按需带 --only-title / --mine) */
@@ -112,7 +151,13 @@ export function buildSearchArgs(query: string, opts: SearchOpts = {}): string[] 
   return args;
 }
 
-/** 查重搜索:返回本人的 DOCX 候选(过滤掉 folder,标题去掉 <h> 高亮标签) */
+/**
+ * 搜索飞书文档,返回本人的 DOCX 候选列表。
+ *
+ * 过滤逻辑:
+ * - doc_types !== "DOCX" 的结果过滤掉(排除文件夹等非文档类型)
+ * - title_highlighted 含 <h>关键词</h> 高亮标签,去掉后返回纯文本标题
+ */
 export async function larkSearchDocs(
   query: string,
   opts: SearchOpts = {},
@@ -121,7 +166,12 @@ export async function larkSearchDocs(
   const stdout = await runner("lark-cli", buildSearchArgs(query, opts));
   let parsed: {
     ok?: boolean;
-    data?: { results?: Array<{ title_highlighted?: string; result_meta?: { url?: string; token?: string; doc_types?: string } }> };
+    data?: {
+      results?: Array<{
+        title_highlighted?: string;
+        result_meta?: { url?: string; token?: string; doc_types?: string };
+      }>;
+    };
     error?: { message?: string };
   };
   try {
@@ -131,20 +181,27 @@ export async function larkSearchDocs(
   }
   if (!parsed.ok) throw new Error(`飞书搜索失败:${parsed.error?.message ?? "unknown"}`);
   return (parsed.data?.results ?? [])
-    .filter((r) => r.result_meta?.doc_types === "DOCX")
+    .filter((r) => r.result_meta?.doc_types === "DOCX") // 只保留真实文档
     .map((r) => ({
-      title: (r.title_highlighted ?? "").replace(/<\/?h>/g, ""),
+      title: (r.title_highlighted ?? "").replace(/<\/?h>/g, ""), // 去掉 <h> 高亮标签
       url: r.result_meta?.url ?? "",
       token: r.result_meta?.token ?? "",
     }));
 }
+
+// ── 读大纲 ────────────────────────────────────────────────────────────────────
 
 /** 构造 `docs +fetch --scope outline` argv */
 export function buildFetchOutlineArgs(docUrl: string): string[] {
   return ["docs", "+fetch", "--doc", docUrl, "--scope", "outline"];
 }
 
-/** 读文档大纲:返回含标题 block_id 的大纲文本(<h2 id=…> 等) */
+/**
+ * 读取文档大纲:返回含 <h2 id="block_id"> 等标题的文本。
+ *
+ * --scope outline 只返回标题层级(不含正文),响应体更小,且 block_id 稳定不变。
+ * 增量合并 agent 读取这个大纲后,判断新知识应插在哪个小节后面,返回锚点 block_id。
+ */
 export async function larkFetchOutline(docUrl: string, runner: CliRunner = defaultRunner): Promise<string> {
   const stdout = await runner("lark-cli", buildFetchOutlineArgs(docUrl));
   let parsed: { ok?: boolean; data?: { document?: { content?: string } }; error?: { message?: string } };
@@ -157,27 +214,31 @@ export async function larkFetchOutline(docUrl: string, runner: CliRunner = defau
   return parsed.data?.document?.content ?? "";
 }
 
-/** 构造 `docs +update --command block_insert_after` argv;内容从 stdin 读 */
+// ── 锚点插入 ──────────────────────────────────────────────────────────────────
+
+/**
+ * 构造 `docs +update --command block_insert_after` argv;内容从 stdin 读。
+ *
+ * block_insert_after 在指定 block_id 的块之后插入新内容,不覆盖已有内容。
+ * 这是增量合并的核心操作:把新小节精确插到旧文相关章节的末尾。
+ */
 export function buildBlockInsertAfterArgs(docUrl: string, blockId: string, format: DocFormat = "markdown"): string[] {
   return [
     "docs",
     "+update",
-    "--doc",
-    docUrl,
-    "--command",
-    "block_insert_after",
-    "--block-id",
-    blockId,
-    "--content",
-    "-",
-    "--doc-format",
-    format,
-    "--as",
-    "user",
+    "--doc", docUrl,
+    "--command", "block_insert_after",
+    "--block-id", blockId,
+    "--content", "-",
+    "--doc-format", format,
+    "--as", "user",
   ];
 }
 
-/** 在指定 block 之后插入内容(把增量插到旧文某小节锚点后) */
+/**
+ * 在指定 block 之后插入 Markdown 内容。
+ * 用于把增量(新小节)插到旧文某个标题锚点后,而不是追加到文档末尾。
+ */
 export async function larkBlockInsertAfter(
   docUrl: string,
   blockId: string,
