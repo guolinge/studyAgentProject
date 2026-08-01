@@ -4,6 +4,11 @@ import {
   larkCreateDoc,
   buildUpdateStrReplaceArgs,
   larkUpdateStrReplace,
+  buildSearchArgs,
+  larkSearchDocs,
+  buildFetchOutlineArgs,
+  buildBlockInsertAfterArgs,
+  larkBlockInsertAfter,
 } from "../src/tools/lark.js";
 
 describe("buildCreateDocArgs", () => {
@@ -73,5 +78,75 @@ describe("larkUpdateStrReplace", () => {
   it("throws when update reports failure", async () => {
     const runner = vi.fn().mockResolvedValue(JSON.stringify({ ok: false, error: { message: "bad" } }));
     await expect(larkUpdateStrReplace("URL", "PAT", "x", runner)).rejects.toThrow(/bad/);
+  });
+});
+
+describe("buildSearchArgs", () => {
+  it("builds drive +search argv with --only-title --mine", () => {
+    expect(buildSearchArgs("pnpm", { mine: true, onlyTitle: true })).toEqual([
+      "drive",
+      "+search",
+      "--query",
+      "pnpm",
+      "--only-title",
+      "--mine",
+    ]);
+  });
+});
+
+describe("larkSearchDocs", () => {
+  it("keeps only DOCX, strips <h> highlight tags from title", async () => {
+    const runner = vi.fn().mockResolvedValue(
+      JSON.stringify({
+        ok: true,
+        data: {
+          results: [
+            { title_highlighted: "<h>pnpm</h> 原理", result_meta: { url: "u1", token: "t1", doc_types: "DOCX" } },
+            { title_highlighted: "pnpm 专题", result_meta: { url: "u2", token: "t2", doc_types: "FOLDER" } },
+          ],
+        },
+      }),
+    );
+    const docs = await larkSearchDocs("pnpm", { mine: true, onlyTitle: true }, runner);
+    expect(docs).toEqual([{ title: "pnpm 原理", url: "u1", token: "t1" }]);
+  });
+});
+
+describe("buildFetchOutlineArgs", () => {
+  it("builds fetch --scope outline", () => {
+    expect(buildFetchOutlineArgs("URL")).toEqual(["docs", "+fetch", "--doc", "URL", "--scope", "outline"]);
+  });
+});
+
+describe("buildBlockInsertAfterArgs", () => {
+  it("builds block_insert_after argv, content from stdin", () => {
+    expect(buildBlockInsertAfterArgs("URL", "blk1")).toEqual([
+      "docs",
+      "+update",
+      "--doc",
+      "URL",
+      "--command",
+      "block_insert_after",
+      "--block-id",
+      "blk1",
+      "--content",
+      "-",
+      "--doc-format",
+      "markdown",
+      "--as",
+      "user",
+    ]);
+  });
+});
+
+describe("larkBlockInsertAfter", () => {
+  it("feeds content via stdin and resolves on ok", async () => {
+    const runner = vi.fn().mockResolvedValue(JSON.stringify({ ok: true, data: {} }));
+    await larkBlockInsertAfter("URL", "blk1", "# 增量", "markdown", runner);
+    expect(runner).toHaveBeenCalledWith(
+      "lark-cli",
+      buildBlockInsertAfterArgs("URL", "blk1", "markdown"),
+      "# 增量",
+    );
   });
 });

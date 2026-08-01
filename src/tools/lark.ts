@@ -90,3 +90,107 @@ export async function larkUpdateStrReplace(
     throw new Error(`飞书更新文档失败:${parsed.error?.message ?? "unknown"}`);
   }
 }
+
+// ── 查重去重合并(Plan 2d)所需的读/写能力 ──────────────────────
+
+export interface SearchOpts {
+  mine?: boolean; // --mine:锁定本人知识库(查重必开,否则召回别人同名文档)
+  onlyTitle?: boolean; // --only-title:标题精准匹配
+}
+
+export interface SearchHit {
+  title: string;
+  url: string;
+  token: string;
+}
+
+/** 构造 `drive +search` argv(按需带 --only-title / --mine) */
+export function buildSearchArgs(query: string, opts: SearchOpts = {}): string[] {
+  const args = ["drive", "+search", "--query", query];
+  if (opts.onlyTitle) args.push("--only-title");
+  if (opts.mine) args.push("--mine");
+  return args;
+}
+
+/** 查重搜索:返回本人的 DOCX 候选(过滤掉 folder,标题去掉 <h> 高亮标签) */
+export async function larkSearchDocs(
+  query: string,
+  opts: SearchOpts = {},
+  runner: CliRunner = defaultRunner,
+): Promise<SearchHit[]> {
+  const stdout = await runner("lark-cli", buildSearchArgs(query, opts));
+  let parsed: {
+    ok?: boolean;
+    data?: { results?: Array<{ title_highlighted?: string; result_meta?: { url?: string; token?: string; doc_types?: string } }> };
+    error?: { message?: string };
+  };
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    throw new Error(`lark-cli 返回非 JSON 输出:${stdout.slice(0, 200)}`);
+  }
+  if (!parsed.ok) throw new Error(`飞书搜索失败:${parsed.error?.message ?? "unknown"}`);
+  return (parsed.data?.results ?? [])
+    .filter((r) => r.result_meta?.doc_types === "DOCX")
+    .map((r) => ({
+      title: (r.title_highlighted ?? "").replace(/<\/?h>/g, ""),
+      url: r.result_meta?.url ?? "",
+      token: r.result_meta?.token ?? "",
+    }));
+}
+
+/** 构造 `docs +fetch --scope outline` argv */
+export function buildFetchOutlineArgs(docUrl: string): string[] {
+  return ["docs", "+fetch", "--doc", docUrl, "--scope", "outline"];
+}
+
+/** 读文档大纲:返回含标题 block_id 的大纲文本(<h2 id=…> 等) */
+export async function larkFetchOutline(docUrl: string, runner: CliRunner = defaultRunner): Promise<string> {
+  const stdout = await runner("lark-cli", buildFetchOutlineArgs(docUrl));
+  let parsed: { ok?: boolean; data?: { document?: { content?: string } }; error?: { message?: string } };
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    throw new Error(`lark-cli 返回非 JSON 输出:${stdout.slice(0, 200)}`);
+  }
+  if (!parsed.ok) throw new Error(`飞书读取大纲失败:${parsed.error?.message ?? "unknown"}`);
+  return parsed.data?.document?.content ?? "";
+}
+
+/** 构造 `docs +update --command block_insert_after` argv;内容从 stdin 读 */
+export function buildBlockInsertAfterArgs(docUrl: string, blockId: string, format: DocFormat = "markdown"): string[] {
+  return [
+    "docs",
+    "+update",
+    "--doc",
+    docUrl,
+    "--command",
+    "block_insert_after",
+    "--block-id",
+    blockId,
+    "--content",
+    "-",
+    "--doc-format",
+    format,
+    "--as",
+    "user",
+  ];
+}
+
+/** 在指定 block 之后插入内容(把增量插到旧文某小节锚点后) */
+export async function larkBlockInsertAfter(
+  docUrl: string,
+  blockId: string,
+  content: string,
+  format: DocFormat = "markdown",
+  runner: CliRunner = defaultRunner,
+): Promise<void> {
+  const stdout = await runner("lark-cli", buildBlockInsertAfterArgs(docUrl, blockId, format), content);
+  let parsed: { ok?: boolean; error?: { message?: string } };
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    throw new Error(`lark-cli 返回非 JSON 输出:${stdout.slice(0, 200)}`);
+  }
+  if (!parsed.ok) throw new Error(`飞书插入内容失败:${parsed.error?.message ?? "unknown"}`);
+}
