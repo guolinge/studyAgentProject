@@ -3,11 +3,19 @@ import Anthropic from "@anthropic-ai/sdk";
 import { loadConfig, resolveAgentConfig } from "./config.js";
 import { loadPrompt } from "./prompts.js";
 import { runAgent, type ModelClient } from "./agentRunner.js";
-import { larkCreateDoc, larkUpdateStrReplace } from "./tools/lark.js";
+import {
+  larkCreateDoc,
+  larkUpdateStrReplace,
+  larkSearchDocs,
+  larkFetchOutline,
+  larkBlockInsertAfter,
+  type SearchHit,
+} from "./tools/lark.js";
 import { tavilySearch, formatSearchContext } from "./tools/tavily.js";
 import { runPipeline } from "./orchestrator.js";
 import { createReadlineAsker } from "./io.js";
 import { renderDiagrams, patchDiagrams } from "./diagrams.js";
+import { mergeIntoDoc } from "./merge.js";
 import type { AgentInput, AgentRole, ResolvedAgentConfig } from "./types.js";
 
 const ROLE_LABEL: Record<AgentRole, string> = {
@@ -70,6 +78,33 @@ async function main() {
           return formatSearchContext(r);
         };
 
+  // 查重去重合并:搜本人相关旧文档;选合并则把增量插进旧文。NO_DEDUP=1 或没配网关时跳过
+  const dedup =
+    process.env.NO_DEDUP === "1" || !base
+      ? undefined
+      : {
+          search: (kw: string) => larkSearchDocs(kw, { mine: true, onlyTitle: true }),
+          merge: async (input: string, target: SearchHit) => {
+            console.error(`  🔀 合并进旧文档《${target.title}》…`);
+            const r = await mergeIntoDoc(input, target, {
+              loadPrompt,
+              runRole,
+              fetchOutline: (u) => larkFetchOutline(u),
+              insertAfter: (u, b, c) => larkBlockInsertAfter(u, b, c),
+            });
+            // 增量里的【配图指令】也补图(在旧文档上 str_replace 占位→画板)
+            if (!noDiagram) {
+              await patchDiagrams(r.incrementalMarkdown, r.url, {
+                loadPrompt,
+                runRole,
+                updateDoc: (u, p, c) => larkUpdateStrReplace(u, p, c),
+                onProgress: (m) => console.error(m),
+              });
+            }
+            return { url: r.url, incrementalMarkdown: r.incrementalMarkdown };
+          },
+        };
+
   // GATE_AUTOPASS=1:两道门自动通过(无人值守/自动化验证);否则真人 readline 交互
   const asker =
     process.env.GATE_AUTOPASS === "1"
@@ -81,6 +116,7 @@ async function main() {
       runRole,
       gate: asker,
       search,
+      dedup,
       publish: async (markdown) => {
         if (dryRun) {
           // dry-run 用于调试:内联渲染所有图后打印(不写飞书)

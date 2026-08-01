@@ -154,6 +154,51 @@ describe("runPipeline", () => {
     expect(gen.input.user).toContain("SEARCHCTX");
   });
 
+  it("dedup: merge choice returns the merged doc and skips the new-doc pipeline", async () => {
+    const { runRole, calls } = makeRunRole({
+      questionAnalysis: "意图\n## 查重关键词\n- pnpm",
+      contentOrganization: "S",
+      contentGeneration: "MD",
+      contentReview: "PASS",
+    });
+    const search = vi.fn().mockResolvedValue([{ title: "旧文", url: "U", token: "t1" }]);
+    const merge = vi.fn().mockResolvedValue({ url: "U", incrementalMarkdown: "增量" });
+    const gate = vi
+      .fn()
+      .mockResolvedValueOnce("") // 门1 通过
+      .mockResolvedValueOnce("1"); // 查重门:选合并第 1 篇
+    const publish = vi.fn().mockResolvedValue("newurl");
+
+    const res = await runPipeline("讲讲 pnpm", { loadPrompt, runRole, gate, publish, dedup: { search, merge } });
+
+    expect(merge).toHaveBeenCalledTimes(1);
+    expect(res.url).toBe("U");
+    expect(publish).not.toHaveBeenCalled(); // 合并路径不新建
+    expect(calls.find((c) => c.role === "contentOrganization")).toBeUndefined(); // 提前返回,没走组织
+  });
+
+  it("dedup: new choice continues building a new doc", async () => {
+    const { runRole } = makeRunRole({
+      questionAnalysis: "意图\n## 查重关键词\n- pnpm",
+      contentOrganization: "S",
+      contentGeneration: "MD",
+      contentReview: "PASS",
+    });
+    const search = vi.fn().mockResolvedValue([{ title: "旧文", url: "U", token: "t1" }]);
+    const merge = vi.fn();
+    const gate = vi
+      .fn()
+      .mockResolvedValueOnce("") // 门1
+      .mockResolvedValueOnce("") // 查重门:回车=新建
+      .mockResolvedValueOnce(""); // 门2
+    const publish = vi.fn().mockResolvedValue("newurl");
+
+    const res = await runPipeline("讲讲 pnpm", { loadPrompt, runRole, gate, publish, dedup: { search, merge } });
+
+    expect(merge).not.toHaveBeenCalled();
+    expect(res.url).toBe("newurl"); // 走了新建
+  });
+
   it("degrades gracefully when search throws (still publishes)", async () => {
     const { runRole } = makeRunRole({
       questionAnalysis: "O",

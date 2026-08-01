@@ -1,5 +1,7 @@
 import type { AgentInput, AgentRole } from "./types.js";
 import type { Asker } from "./io.js";
+import type { SearchHit } from "./tools/lark.js";
+import { parseDedupKeywords, searchDuplicates, formatDedupPrompt, parseGateChoice } from "./dedup.js";
 
 /** 从生成的 Markdown 里取首个 # 标题作为文档标题(取不到就用输入回退) */
 export function extractTitle(markdown: string, fallback: string): string {
@@ -14,6 +16,11 @@ export interface PipelineDeps {
   publish: (markdown: string) => Promise<string>;
   reviewMaxRetries?: number; // 审核打回上限,默认 2
   search?: (query: string) => Promise<string>; // 联网搜索,返回已格式化的上下文;不传则跳过
+  dedup?: {
+    // 查重:按关键词搜本人旧文档;merge:把新知识增量合并进选中的旧文档,返回其 url + 增量
+    search: (keyword: string) => Promise<SearchHit[]>;
+    merge: (userInput: string, target: SearchHit) => Promise<{ url: string; incrementalMarkdown: string }>;
+  };
 }
 
 export interface PipelineResult {
@@ -59,6 +66,26 @@ export async function runPipeline(userInput: string, deps: PipelineDeps): Promis
   // ① 问题分析 →门1(轻):确认范围/意图
   const qaSystem = buildSystem(deps.loadPrompt, "question-analysis", false);
   const outline1 = await iterateWithGate(deps, "questionAnalysis", "门1 · 确认范围/意图", qaSystem, userInput);
+
+  // 查重分流:搜本人相关旧文档 → 有候选才弹查重门 → 选合并则走 mergeIntoDoc 提前返回
+  if (deps.dedup) {
+    const keywords = parseDedupKeywords(outline1);
+    const candidates = keywords.length
+      ? await searchDuplicates(keywords, { search: deps.dedup.search })
+      : [];
+    if (candidates.length > 0) {
+      const reply = await deps.gate("查重 · 发现相关旧文档", formatDedupPrompt(candidates));
+      const choice = parseGateChoice(reply, candidates);
+      if (choice.action === "merge") {
+        try {
+          const { url, incrementalMarkdown } = await deps.dedup.merge(userInput, choice.target);
+          return { url, markdown: incrementalMarkdown, skeleton: "" };
+        } catch (e) {
+          console.error(`  ⚠ 合并失败,降级为新建:${(e as Error).message}`);
+        }
+      }
+    }
+  }
 
   // 联网搜索:搜一次(用用户输入作 query),结果顺流水线下传;失败则优雅降级
   let searchContext = "";
