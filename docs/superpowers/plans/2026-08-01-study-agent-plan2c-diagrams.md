@@ -92,6 +92,12 @@ Plan 2a 让飞书文档有原生块排版,2b 加了联网时效性。但内容�
 
 ---
 
+## 实现增强(超出原计划,已落地)
+
+- **先文字后补图(渐进式呈现,设计文档7.1)**:publish 先 `larkCreateDoc` 写纯文字(含占位)立刻拿 URL,再 `patchDiagrams` 逐张补图。文字秒出,不用等图。
+- **并行补图**:所有图并行生成,哪张先画完先补哪张;`docs +update` 的 str_replace 补图串行(防同文档 revision 冲突)。`lark.ts` 新增 `larkUpdateStrReplace`。
+- **省钱开关**:`MODEL_OVERRIDE` / `EFFORT_OVERRIDE` 环境变量覆盖所有 agent 的模型/effort(测试用便宜模型,不动正式 config);`NO_DIAGRAM=1` 跳过画图。
+
 ## 完成标准(Plan 2c Done)
 
 - [ ] `npm test` 全绿、`npm run typecheck` 无错
