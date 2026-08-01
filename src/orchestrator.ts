@@ -13,6 +13,7 @@ export interface PipelineDeps {
   gate: Asker; // 两道门共用
   publish: (markdown: string) => Promise<string>;
   reviewMaxRetries?: number; // 审核打回上限,默认 2
+  search?: (query: string) => Promise<string>; // 联网搜索,返回已格式化的上下文;不传则跳过
 }
 
 export interface PipelineResult {
@@ -59,14 +60,26 @@ export async function runPipeline(userInput: string, deps: PipelineDeps): Promis
   const qaSystem = buildSystem(deps.loadPrompt, "question-analysis", false);
   const outline1 = await iterateWithGate(deps, "questionAnalysis", "门1 · 确认范围/意图", qaSystem, userInput);
 
-  // ② 内容组织 →门2(重):确认三级骨架(输入含问题分析产出)
+  // 联网搜索:搜一次(用用户输入作 query),结果顺流水线下传;失败则优雅降级
+  let searchContext = "";
+  if (deps.search) {
+    try {
+      searchContext = await deps.search(userInput);
+    } catch (e) {
+      console.error(`  ⚠ 联网搜索失败,降级为纯模型作答:${(e as Error).message}`);
+      searchContext = "";
+    }
+  }
+  const withSearch = (base: string) => (searchContext ? `${base}\n\n${searchContext}` : base);
+
+  // ② 内容组织 →门2(重):确认三级骨架(输入含问题分析产出 + 搜索结果)
   const orgSystem = buildSystem(deps.loadPrompt, "content-organization", true);
-  const orgUser = `${userInput}\n\n【已确认的范围与意图】\n${outline1}`;
+  const orgUser = withSearch(`${userInput}\n\n【已确认的范围与意图】\n${outline1}`);
   const skeleton = await iterateWithGate(deps, "contentOrganization", "门2 · 确认骨架", orgSystem, orgUser);
 
-  // ③ 内容生成(输入含骨架)
+  // ③ 内容生成(输入含骨架 + 搜索结果)
   const genSystem = buildSystem(deps.loadPrompt, "content-generation", true);
-  const genUser = `${userInput}\n\n【已确认的骨架】\n${skeleton}`;
+  const genUser = withSearch(`${userInput}\n\n【已确认的骨架】\n${skeleton}`);
   let markdown = await deps.runRole("contentGeneration", { system: genSystem, user: genUser });
 
   // ④ 内容审核:对照骨架检查;FAIL 打回③重生成,最多 maxRetries 次

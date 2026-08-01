@@ -131,4 +131,44 @@ describe("runPipeline", () => {
     expect(org.input.system).toContain("STYLE-RULES");
     expect(gen.input.system).toContain("STYLE-RULES");
   });
+
+  it("calls search once and injects its context into organization & generation", async () => {
+    const { runRole, calls } = makeRunRole({
+      questionAnalysis: "O",
+      contentOrganization: "S",
+      contentGeneration: "MD",
+      contentReview: "PASS",
+    });
+    const search = vi.fn().mockResolvedValue("SEARCHCTX");
+    await runPipeline("X", {
+      loadPrompt,
+      runRole,
+      gate: vi.fn().mockResolvedValue(""),
+      publish: vi.fn().mockResolvedValue("u"),
+      search,
+    });
+    expect(search).toHaveBeenCalledTimes(1); // 搜一次,不是每个 agent 各搜一遍
+    const org = calls.find((c) => c.role === "contentOrganization")!;
+    const gen = calls.find((c) => c.role === "contentGeneration")!;
+    expect(org.input.user).toContain("SEARCHCTX");
+    expect(gen.input.user).toContain("SEARCHCTX");
+  });
+
+  it("degrades gracefully when search throws (still publishes)", async () => {
+    const { runRole } = makeRunRole({
+      questionAnalysis: "O",
+      contentOrganization: "S",
+      contentGeneration: "MD",
+      contentReview: "PASS",
+    });
+    const search = vi.fn().mockRejectedValue(new Error("net down"));
+    const res = await runPipeline("X", {
+      loadPrompt,
+      runRole,
+      gate: vi.fn().mockResolvedValue(""),
+      publish: vi.fn().mockResolvedValue("u"),
+      search,
+    });
+    expect(res.url).toBe("u"); // 搜索失败不阻断,仍 publish
+  });
 });
