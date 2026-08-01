@@ -3,6 +3,7 @@ import {
   extractDiagramSpecs,
   renderDiagram,
   renderDiagrams,
+  patchDiagrams,
 } from "../src/diagrams.js";
 
 const loadPrompt = (n: string) => n.toUpperCase();
@@ -60,5 +61,23 @@ describe("renderDiagrams", () => {
     expect(out).toContain('<whiteboard type="svg">' + clean + "</whiteboard>");
     expect(out).toContain("【配图指令:坏图】"); // 失败的保留文字占位
     expect(out).not.toContain("【配图指令:好图】"); // 成功的被替换
+  });
+});
+
+describe("patchDiagrams", () => {
+  it("patches successful diagrams via updateDoc, skips failed ones", async () => {
+    const md = "A\n【配图指令:好图】\nB\n【配图指令:坏图】\nC";
+    const runRole = vi.fn(async (_role: string, input: { user: string }) =>
+      input.user.includes("好图") ? clean : dirty,
+    );
+    const updateDoc = vi.fn().mockResolvedValue(undefined);
+    const res = await patchDiagrams(md, "URL", { loadPrompt, runRole, updateDoc, maxRetries: 1 });
+    expect(res).toEqual({ total: 2, patched: 1 });
+    expect(updateDoc).toHaveBeenCalledTimes(1);
+    expect(updateDoc).toHaveBeenCalledWith(
+      "URL",
+      "【配图指令:好图】",
+      '<whiteboard type="svg">' + clean + "</whiteboard>",
+    );
   });
 });

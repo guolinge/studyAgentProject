@@ -51,3 +51,42 @@ export async function larkCreateDoc(
   if (!url) throw new Error("飞书返回中缺少 document.url");
   return url;
 }
+
+/** 构造 `docs +update --command str_replace` 的 argv;替换内容从 stdin 读 */
+export function buildUpdateStrReplaceArgs(docUrl: string, pattern: string, format: DocFormat = "xml"): string[] {
+  return [
+    "docs",
+    "+update",
+    "--doc",
+    docUrl,
+    "--command",
+    "str_replace",
+    "--pattern",
+    pattern,
+    "--content",
+    "-",
+    "--doc-format",
+    format,
+    "--as",
+    "user",
+  ];
+}
+
+/** 用 str_replace 把文档里的 pattern 文本替换成 content(如把配图占位换成画板) */
+export async function larkUpdateStrReplace(
+  docUrl: string,
+  pattern: string,
+  content: string,
+  runner: CliRunner = defaultRunner,
+): Promise<void> {
+  const stdout = await runner("lark-cli", buildUpdateStrReplaceArgs(docUrl, pattern), content);
+  let parsed: { ok?: boolean; error?: { message?: string } };
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    throw new Error(`lark-cli 返回非 JSON 输出:${stdout.slice(0, 200)}`);
+  }
+  if (!parsed.ok) {
+    throw new Error(`飞书更新文档失败:${parsed.error?.message ?? "unknown"}`);
+  }
+}

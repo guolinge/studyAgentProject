@@ -3,11 +3,11 @@ import Anthropic from "@anthropic-ai/sdk";
 import { loadConfig, resolveAgentConfig } from "./config.js";
 import { loadPrompt } from "./prompts.js";
 import { runAgent, type ModelClient } from "./agentRunner.js";
-import { larkCreateDoc } from "./tools/lark.js";
+import { larkCreateDoc, larkUpdateStrReplace } from "./tools/lark.js";
 import { tavilySearch, formatSearchContext } from "./tools/tavily.js";
 import { runPipeline } from "./orchestrator.js";
 import { createReadlineAsker } from "./io.js";
-import { renderDiagrams } from "./diagrams.js";
+import { renderDiagrams, patchDiagrams } from "./diagrams.js";
 import type { AgentInput, AgentRole } from "./types.js";
 
 const ROLE_LABEL: Record<AgentRole, string> = {
@@ -72,19 +72,29 @@ async function main() {
       gate: asker,
       search,
       publish: async (markdown) => {
-        // 把 markdown 里的【配图指令】渲染成飞书画板 SVG(失败的降级为文字占位)
-        let md = markdown;
-        if (!noDiagram) {
-          console.error("\n正在生成配图(SVG)…");
-          md = await renderDiagrams(markdown, { loadPrompt, runRole });
-        }
         if (dryRun) {
+          // dry-run 用于调试:内联渲染所有图后打印(不写飞书)
+          const md = noDiagram ? markdown : await renderDiagrams(markdown, { loadPrompt, runRole });
           console.error("\n(dry-run)跳过飞书写入,打印将导入的内容:\n");
           console.log(md);
           return "(dry-run:未写入飞书)";
         }
-        console.error("\n正在写入飞书…");
-        return larkCreateDoc(md, "markdown");
+        // ① 先写文字(含配图占位),立刻拿到 URL —— 你可马上阅读
+        console.error("\n正在写入飞书(文字)…");
+        const url = await larkCreateDoc(markdown, "markdown");
+        console.log("\n✅ 文字已写入飞书:", url);
+        // ② 再逐张画图,用 str_replace 把占位补成画板(在飞书里图会陆续出现)
+        if (!noDiagram) {
+          console.error("\n开始补图(可先阅读文字,图会陆续补上)…");
+          const { total, patched } = await patchDiagrams(markdown, url, {
+            loadPrompt,
+            runRole,
+            updateDoc: (u, p, c) => larkUpdateStrReplace(u, p, c),
+            onProgress: (m) => console.error(m),
+          });
+          console.error(`✅ 配图补齐:${patched}/${total}`);
+        }
+        return url;
       },
     });
     console.log("\n✅ 已写入飞书:", result.url);

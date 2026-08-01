@@ -63,3 +63,33 @@ export async function renderDiagrams(markdown: string, deps: DiagramDeps): Promi
   }
   return result;
 }
+
+export interface PatchDeps extends DiagramDeps {
+  // 把已建文档 docUrl 里的 pattern 文本替换成 content(str_replace 补图)
+  updateDoc: (docUrl: string, pattern: string, content: string) => Promise<void>;
+  onProgress?: (msg: string) => void;
+}
+
+/**
+ * 先文字后补图:文档(docUrl)已建好(含【配图指令】占位),逐张画图并把占位补成画板。
+ * 每张独立:成功即补上,失败保留文字占位,不阻断其余。返回补图统计。
+ */
+export async function patchDiagrams(
+  markdown: string,
+  docUrl: string,
+  deps: PatchDeps,
+): Promise<{ total: number; patched: number }> {
+  const specs = extractDiagramSpecs(markdown);
+  const context = markdown.replace(SPEC_RE, "").trim();
+  let patched = 0;
+  for (let i = 0; i < specs.length; i++) {
+    const spec = specs[i];
+    deps.onProgress?.(`  🎨 补图 ${i + 1}/${specs.length}:${spec.instruction}`);
+    const svg = await renderDiagram(spec, context, deps);
+    if (svg) {
+      await deps.updateDoc(docUrl, spec.raw, `<whiteboard type="svg">${svg}</whiteboard>`);
+      patched++;
+    }
+  }
+  return { total: specs.length, patched };
+}
