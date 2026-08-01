@@ -1,45 +1,88 @@
-import type { AgentInput } from "./types.js";
-
-function escapeXml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
+import type { AgentInput, AgentRole } from "./types.js";
+import type { Asker } from "./io.js";
 
 /** 从生成的 Markdown 里取首个 # 标题作为文档标题(取不到就用输入回退) */
-function extractTitle(markdown: string, fallback: string): string {
+export function extractTitle(markdown: string, fallback: string): string {
   const m = markdown.match(/^#\s+(.+)$/m);
   return (m?.[1] ?? fallback).trim();
 }
 
-/**
- * 把生成结果包成飞书 docs +create 接受的最小 XML。
- * Plan 1 只做:标题 + 正文塞进一个段落(正文按原样保留,换行转 <br/>)。
- */
-export function markdownToDocXml(title: string, body: string): string {
-  const safeTitle = escapeXml(title);
-  const safeBody = escapeXml(body).replace(/\n/g, "<br/>");
-  return `<title>${safeTitle}</title><p>${safeBody}</p>`;
-}
-
-export interface SkeletonDeps {
-  generate: (input: AgentInput) => Promise<string>;
-  publish: (contentXml: string) => Promise<string>;
+export interface PipelineDeps {
   loadPrompt: (name: string) => string;
+  runRole: (role: AgentRole, input: AgentInput) => Promise<string>;
+  gate: Asker; // 两道门共用
+  publish: (markdown: string) => Promise<string>;
+  reviewMaxRetries?: number; // 审核打回上限,默认 2
 }
 
-export interface SkeletonResult {
+export interface PipelineResult {
   url: string;
   markdown: string;
+  skeleton: string;
 }
 
-/** 骨架链路:输入 → 生成(角色prompt+规则) → 包成飞书 XML → 写飞书 → 返回 URL */
-export async function runSkeleton(userInput: string, deps: SkeletonDeps): Promise<SkeletonResult> {
-  const role = deps.loadPrompt("content-generation");
-  const rules = deps.loadPrompt("style-rules");
-  const system = `${role}\n\n---\n\n${rules}`;
+/** 拼 system:角色 prompt(+ 可选附上 style-rules) */
+function buildSystem(loadPrompt: PipelineDeps["loadPrompt"], roleFile: string, withRules: boolean): string {
+  const role = loadPrompt(roleFile);
+  if (!withRules) return role;
+  return `${role}\n\n---\n\n${loadPrompt("style-rules")}`;
+}
 
-  const markdown = await deps.generate({ system, user: userInput });
-  const title = extractTitle(markdown, userInput);
-  const xml = markdownToDocXml(title, markdown);
-  const url = await deps.publish(xml);
-  return { url, markdown };
+/**
+ * 门迭代:跑 role 产出 → 展示给使用者 → 拿反馈。
+ * 空反馈=通过,返回产出;非空=把反馈拼进 user 重跑,循环到通过。
+ */
+async function iterateWithGate(
+  deps: PipelineDeps,
+  role: AgentRole,
+  gateTitle: string,
+  system: string,
+  baseUser: string,
+): Promise<string> {
+  let output = await deps.runRole(role, { system, user: baseUser });
+  for (;;) {
+    const reply = await deps.gate(gateTitle, output);
+    if (reply === "") return output;
+    const user = `${baseUser}\n\n【上一版产出】\n${output}\n\n【使用者修改意见】\n${reply}\n\n请据此修改后重新输出(保持同样的格式)。`;
+    output = await deps.runRole(role, { system, user });
+  }
+}
+
+/**
+ * 完整流水线:问题分析 →门1→ 内容组织 →门2→ 内容生成 →审核打回→ 写飞书。
+ * 上游产出顺流水线下传;两道门"展示+文字反馈迭代";审核 FAIL 打回重生成(有上限)。
+ */
+export async function runPipeline(userInput: string, deps: PipelineDeps): Promise<PipelineResult> {
+  const maxRetries = deps.reviewMaxRetries ?? 2;
+
+  // ① 问题分析 →门1(轻):确认范围/意图
+  const qaSystem = buildSystem(deps.loadPrompt, "question-analysis", false);
+  const outline1 = await iterateWithGate(deps, "questionAnalysis", "门1 · 确认范围/意图", qaSystem, userInput);
+
+  // ② 内容组织 →门2(重):确认三级骨架(输入含问题分析产出)
+  const orgSystem = buildSystem(deps.loadPrompt, "content-organization", true);
+  const orgUser = `${userInput}\n\n【已确认的范围与意图】\n${outline1}`;
+  const skeleton = await iterateWithGate(deps, "contentOrganization", "门2 · 确认骨架", orgSystem, orgUser);
+
+  // ③ 内容生成(输入含骨架)
+  const genSystem = buildSystem(deps.loadPrompt, "content-generation", true);
+  const genUser = `${userInput}\n\n【已确认的骨架】\n${skeleton}`;
+  let markdown = await deps.runRole("contentGeneration", { system: genSystem, user: genUser });
+
+  // ④ 内容审核:对照骨架检查;FAIL 打回③重生成,最多 maxRetries 次
+  const reviewSystem = buildSystem(deps.loadPrompt, "content-review", false);
+  for (let i = 0; i < maxRetries; i++) {
+    const verdict = await deps.runRole("contentReview", {
+      system: reviewSystem,
+      user: `【骨架】\n${skeleton}\n\n【正文】\n${markdown}`,
+    });
+    if (/^\s*PASS/.test(verdict)) break;
+    markdown = await deps.runRole("contentGeneration", {
+      system: genSystem,
+      user: `${genUser}\n\n【上一版正文】\n${markdown}\n\n【审核问题】\n${verdict}\n\n请修补后重新输出完整正文。`,
+    });
+  }
+
+  const url = await deps.publish(markdown);
+  return { url, markdown, skeleton };
 }
