@@ -32,3 +32,9 @@ export interface AgentInput {
   system: string; // system prompt
   user: string; // 用户内容
 }
+
+// 门反馈记录(非空 reply 才记录),用于 Distiller 蒸馏
+export interface GateFeedback {
+  gate: string;     // 门标题,如"门1 · 确认范围/意图"
+  feedback: string; // 用户输入的修改意见(已归一化)
+}

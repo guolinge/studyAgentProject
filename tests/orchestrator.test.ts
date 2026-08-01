@@ -199,6 +199,46 @@ describe("runPipeline", () => {
     expect(res.url).toBe("newurl"); // 走了新建
   });
 
+  it("feedbacks is empty when all gates pass on first try", async () => {
+    const { runRole } = makeRunRole({
+      questionAnalysis: "O",
+      contentOrganization: "S",
+      contentGeneration: "MD",
+      contentReview: "PASS",
+    });
+    const res = await runPipeline("X", {
+      loadPrompt,
+      runRole,
+      gate: vi.fn().mockResolvedValue(""),
+      publish: vi.fn().mockResolvedValue("u"),
+    });
+    expect(res.feedbacks).toEqual([]);
+  });
+
+  it("feedbacks captures gate title and text when user gives feedback", async () => {
+    const { runRole } = makeRunRole({
+      questionAnalysis: ["O_v1", "O_v2"],
+      contentOrganization: ["S_v1", "S_v2"],
+      contentGeneration: "MD",
+      contentReview: "PASS",
+    });
+    const gate = vi
+      .fn()
+      .mockResolvedValueOnce("话题太少了") // 门1 反馈
+      .mockResolvedValueOnce("") // 门1 通过
+      .mockResolvedValueOnce("要加一节复杂度分析") // 门2 反馈
+      .mockResolvedValueOnce(""); // 门2 通过
+    const res = await runPipeline("X", {
+      loadPrompt,
+      runRole,
+      gate,
+      publish: vi.fn().mockResolvedValue("u"),
+    });
+    expect(res.feedbacks).toHaveLength(2);
+    expect(res.feedbacks[0]).toEqual({ gate: "门1 · 确认范围/意图", feedback: "话题太少了" });
+    expect(res.feedbacks[1]).toEqual({ gate: "门2 · 确认骨架", feedback: "要加一节复杂度分析" });
+  });
+
   it("degrades gracefully when search throws (still publishes)", async () => {
     const { runRole } = makeRunRole({
       questionAnalysis: "O",

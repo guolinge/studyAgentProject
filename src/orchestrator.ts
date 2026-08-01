@@ -1,4 +1,4 @@
-import type { AgentInput, AgentRole } from "./types.js";
+import type { AgentInput, AgentRole, GateFeedback } from "./types.js";
 import type { Asker } from "./io.js";
 import type { SearchHit } from "./tools/lark.js";
 import { parseDedupKeywords, searchDuplicates, formatDedupPrompt, parseGateChoice } from "./dedup.js";
@@ -27,6 +27,7 @@ export interface PipelineResult {
   url: string;
   markdown: string;
   skeleton: string;
+  feedbacks: GateFeedback[]; // 各道门中用户给出的非空修改意见
 }
 
 /** 拼 system:角色 prompt(+ 可选附上 style-rules) */
@@ -39,6 +40,7 @@ function buildSystem(loadPrompt: PipelineDeps["loadPrompt"], roleFile: string, w
 /**
  * 门迭代:跑 role 产出 → 展示给使用者 → 拿反馈。
  * 空反馈=通过,返回产出;非空=把反馈拼进 user 重跑,循环到通过。
+ * collector 可选:每次非空反馈都调用一次,用于 Distiller 收集。
  */
 async function iterateWithGate(
   deps: PipelineDeps,
@@ -46,11 +48,13 @@ async function iterateWithGate(
   gateTitle: string,
   system: string,
   baseUser: string,
+  collector?: (f: GateFeedback) => void,
 ): Promise<string> {
   let output = await deps.runRole(role, { system, user: baseUser });
   for (;;) {
     const reply = await deps.gate(gateTitle, output);
     if (reply === "") return output;
+    collector?.({ gate: gateTitle, feedback: reply });
     const user = `${baseUser}\n\n【上一版产出】\n${output}\n\n【使用者修改意见】\n${reply}\n\n请据此修改后重新输出(保持同样的格式)。`;
     output = await deps.runRole(role, { system, user });
   }
@@ -62,10 +66,12 @@ async function iterateWithGate(
  */
 export async function runPipeline(userInput: string, deps: PipelineDeps): Promise<PipelineResult> {
   const maxRetries = deps.reviewMaxRetries ?? 2;
+  const feedbacks: GateFeedback[] = [];
+  const collect = (f: GateFeedback) => feedbacks.push(f);
 
   // ① 问题分析 →门1(轻):确认范围/意图
   const qaSystem = buildSystem(deps.loadPrompt, "question-analysis", false);
-  const outline1 = await iterateWithGate(deps, "questionAnalysis", "门1 · 确认范围/意图", qaSystem, userInput);
+  const outline1 = await iterateWithGate(deps, "questionAnalysis", "门1 · 确认范围/意图", qaSystem, userInput, collect);
 
   // 查重分流:搜本人相关旧文档 → 有候选才弹查重门 → 选合并则走 mergeIntoDoc 提前返回
   if (deps.dedup) {
@@ -79,7 +85,7 @@ export async function runPipeline(userInput: string, deps: PipelineDeps): Promis
       if (choice.action === "merge") {
         try {
           const { url, incrementalMarkdown } = await deps.dedup.merge(userInput, choice.target);
-          return { url, markdown: incrementalMarkdown, skeleton: "" };
+          return { url, markdown: incrementalMarkdown, skeleton: "", feedbacks };
         } catch (e) {
           console.error(`  ⚠ 合并失败,降级为新建:${(e as Error).message}`);
         }
@@ -102,7 +108,7 @@ export async function runPipeline(userInput: string, deps: PipelineDeps): Promis
   // ② 内容组织 →门2(重):确认三级骨架(输入含问题分析产出 + 搜索结果)
   const orgSystem = buildSystem(deps.loadPrompt, "content-organization", true);
   const orgUser = withSearch(`${userInput}\n\n【已确认的范围与意图】\n${outline1}`);
-  const skeleton = await iterateWithGate(deps, "contentOrganization", "门2 · 确认骨架", orgSystem, orgUser);
+  const skeleton = await iterateWithGate(deps, "contentOrganization", "门2 · 确认骨架", orgSystem, orgUser, collect);
 
   // ③ 内容生成(输入含骨架 + 搜索结果)
   const genSystem = buildSystem(deps.loadPrompt, "content-generation", true);
@@ -124,5 +130,5 @@ export async function runPipeline(userInput: string, deps: PipelineDeps): Promis
   }
 
   const url = await deps.publish(markdown);
-  return { url, markdown, skeleton };
+  return { url, markdown, skeleton, feedbacks };
 }
