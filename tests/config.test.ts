@@ -5,7 +5,7 @@ const raw = {
   defaults: { model: "claude-opus-4-8", effort: "high", maxTokens: 16000, thinking: "adaptive" },
   agents: {
     contentGeneration: { effort: "high", maxTokens: 32000 },
-    contentReview: { model: "claude-haiku-4-5", effort: "low" },
+    contentReview: { model: "claude-haiku-4-5-20251001", effort: "low" },
   },
 } as const;
 
@@ -29,7 +29,7 @@ describe("resolveAgentConfig", () => {
 
   it("override model wins", () => {
     const cfg = ConfigSchema.parse(raw);
-    expect(resolveAgentConfig(cfg, "contentReview").model).toBe("claude-haiku-4-5");
+    expect(resolveAgentConfig(cfg, "contentReview").model).toBe("claude-haiku-4-5-20251001");
   });
 
   it("rejects an unknown effort value", () => {
