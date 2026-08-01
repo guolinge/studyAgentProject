@@ -1,12 +1,12 @@
 {
-  "defaults": { "model": "claude-opus-4-8", "effort": "high", "maxTokens": 16000, "thinking": "adaptive" },
+  "defaults": { "model": "claude-sonnet-4-6", "effort": "high", "maxTokens": 16000, "thinking": "adaptive" },
   "agents": {
-    "questionAnalysis":    { "effort": "medium" },
+    "questionAnalysis":    { "model": "claude-haiku-4-5-20251001", "effort": "low" },
     "contentOrganization": { "effort": "high" },
     "contentGeneration":   { "effort": "high", "maxTokens": 32000 },
     "contentReview":       { "model": "claude-haiku-4-5-20251001", "effort": "low" },
     "diagramSvg":          { "effort": "high", "maxTokens": 32000 },
     "incrementalMerge":    { "effort": "high", "maxTokens": 32000 },
-    "distiller":           { "effort": "medium" }
+    "distiller":           { "model": "claude-haiku-4-5-20251001", "effort": "low" }
   }
 }
