@@ -12,7 +12,7 @@
     "typecheck": "tsc --noEmit",
     "start": "node --import tsx src/cli.ts",
     "serve": "node --import tsx src/server.ts",
-    "dev": "concurrently -n backend,frontend -c cyan,magenta --kill-others-on-fail \"npm run serve\" \"npm --prefix web run dev -- --open\""
+    "dev": "concurrently -n backend,frontend,browser -c cyan,magenta,blue --kill-others-on-fail \"npm run serve\" \"npm --prefix web run dev\" \"sleep 3 && open http://localhost:3000\""
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",
