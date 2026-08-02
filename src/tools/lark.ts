@@ -53,8 +53,10 @@ export const defaultRunner: CliRunner = (cmd, args, stdin) =>
 // ── 创建文档 ──────────────────────────────────────────────────────────────────
 
 /** 构造 `lark-cli docs +create` 的 argv;内容从 stdin 读(--content -,避开 shell 转义) */
-export function buildCreateDocArgs(format: DocFormat = "markdown"): string[] {
-  return ["docs", "+create", "--doc-format", format, "--content", "-", "--as", "user"];
+export function buildCreateDocArgs(format: DocFormat = "markdown", parentToken?: string): string[] {
+  const args = ["docs", "+create", "--doc-format", format, "--content", "-", "--as", "user"];
+  if (parentToken) args.push("--parent-token", parentToken);
+  return args;
 }
 
 /**
@@ -66,9 +68,10 @@ export function buildCreateDocArgs(format: DocFormat = "markdown"): string[] {
 export async function larkCreateDoc(
   content: string,
   format: DocFormat = "markdown",
+  parentToken?: string,
   runner: CliRunner = defaultRunner,
 ): Promise<string> {
-  const stdout = await runner("lark-cli", buildCreateDocArgs(format), content);
+  const stdout = await runner("lark-cli", buildCreateDocArgs(format, parentToken), content);
   let parsed: {
     ok?: boolean;
     data?: { document?: { url?: string } };
@@ -85,6 +88,28 @@ export async function larkCreateDoc(
   const url = parsed.data?.document?.url;
   if (!url) throw new Error("飞书返回中缺少 document.url");
   return url;
+}
+
+// ── 新建文件夹 ────────────────────────────────────────────────────────────────
+
+/** 在指定父文件夹下新建文件夹，返回新文件夹 token */
+export async function larkCreateFolder(
+  name: string,
+  parentToken: string,
+  runner: CliRunner = defaultRunner,
+): Promise<string> {
+  const args = ["drive", "+create-folder", "--name", name, "--folder-token", parentToken, "--as", "user"];
+  const stdout = await runner("lark-cli", args);
+  let parsed: { ok?: boolean; data?: { token?: string }; error?: { message?: string } };
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    throw new Error(`lark-cli 返回非 JSON 输出:${stdout.slice(0, 200)}`);
+  }
+  if (!parsed.ok) throw new Error(`飞书新建文件夹失败:${parsed.error?.message ?? "unknown"}`);
+  const token = parsed.data?.token;
+  if (!token) throw new Error("飞书返回中缺少文件夹 token");
+  return token;
 }
 
 // ── 更新文档(str_replace) ─────────────────────────────────────────────────────

@@ -30,6 +30,7 @@ import { loadPrompt } from "./prompts.js";
 import { runAgent, type ModelClient } from "./agentRunner.js";
 import {
   larkCreateDoc,
+  larkCreateFolder,
   larkUpdateStrReplace,
   larkSearchDocs,
   larkFetchOutline,
@@ -37,6 +38,7 @@ import {
   larkAppendToDoc,
   type SearchHit,
 } from "./tools/lark.js";
+import type { PlacementInfo } from "./orchestrator.js";
 import { tavilySearch, formatSearchContext } from "./tools/tavily.js";
 import { runPipeline } from "./orchestrator.js";
 import { createReadlineAsker } from "./io.js";
@@ -188,16 +190,24 @@ async function main() {
        *
        * dry-run 时:内联渲染所有图后打印 Markdown,不写飞书。
        */
-      publish: async (markdown) => {
+      publish: async (markdown, placement: PlacementInfo) => {
         if (dryRun) {
           const md = noDiagram ? markdown : await renderDiagrams(markdown, { loadPrompt, runRole });
           console.error("\n(dry-run)跳过飞书写入,打印将导入的内容:\n");
           console.log(md);
           return "(dry-run:未写入飞书)";
         }
+        // 解析目标文件夹 token（需要时先创建新文件夹）
+        let folderToken: string;
+        if (placement.type === "new") {
+          console.error(`  📁 新建文件夹「${placement.folderName}」…`);
+          folderToken = await larkCreateFolder(placement.folderName, placement.parentToken);
+        } else {
+          folderToken = placement.folderToken;
+        }
         // ① 先写文字,用户可立刻开始阅读
         console.error("\n正在写入飞书(文字)…");
-        const url = await larkCreateDoc(markdown, "markdown");
+        const url = await larkCreateDoc(markdown, "markdown", folderToken);
         console.log("\n✅ 文字已写入飞书:", url);
         // ② 后台补图(并行生成 + 串行 update)
         if (!noDiagram) {

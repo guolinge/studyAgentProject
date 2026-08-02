@@ -21,6 +21,48 @@ import type { AgentInput, AgentRole, GateFeedback } from "./types.js";
 import type { Asker } from "./io.js";
 import type { SearchHit } from "./tools/lark.js";
 import { parseDedupKeywords, searchDuplicates, formatDedupPrompt, parseGateChoice } from "./dedup.js";
+import { renderFolderTree, findByToken, folderTreeRoot } from "./folderTree.js";
+
+/** 归档位置：现有文件夹 or 需要新建的文件夹 */
+export type PlacementInfo =
+  | { type: "existing"; folderToken: string; title: string }
+  | { type: "new"; parentToken: string; folderName: string; title: string };
+
+/**
+ * 从 questionAnalysis 输出中解析 ## 文档标题 和 ## 归档位置。
+ *
+ * 现有文件夹格式：`<路径> [token: <token>]`
+ * 新建文件夹格式：`新建文件夹：<父路径>/<新名> [parent_token: <token>]`
+ *
+ * token 合法性用 findByToken 验证；无法识别时 fallback 到技术知识库根节点。
+ */
+export function parsePlacement(output: string, userInputFallback: string): PlacementInfo {
+  const titleMatch = output.match(/^##\s*文档标题\s*\n([^\n#]+)/m);
+  const title = titleMatch ? titleMatch[1].trim() : userInputFallback;
+
+  const locMatch = output.match(/^##\s*归档位置\s*\n([^\n#]+)/m);
+  const locLine = locMatch ? locMatch[1].trim() : "";
+
+  // 新建文件夹
+  const newMatch = locLine.match(/新建文件夹[：:].+?\[parent_token:\s*([A-Za-z0-9]+)\]/);
+  if (newMatch) {
+    const parentToken = newMatch[1];
+    const folderNameMatch = locLine.match(/\/([^/\[]+)\s*\[/);
+    const folderName = folderNameMatch ? folderNameMatch[1].trim() : "新建分类";
+    const validParent = findByToken(parentToken) ? parentToken : folderTreeRoot.token;
+    return { type: "new", parentToken: validParent, folderName, title };
+  }
+
+  // 现有文件夹
+  const tokenMatch = locLine.match(/\[token:\s*([A-Za-z0-9]+)\]/);
+  if (tokenMatch) {
+    const token = tokenMatch[1];
+    if (findByToken(token)) return { type: "existing", folderToken: token, title };
+  }
+
+  // fallback：技术知识库根
+  return { type: "existing", folderToken: folderTreeRoot.token, title };
+}
 
 /** 从生成的 Markdown 里取首个 # 标题作为文档标题(取不到就用输入回退) */
 export function extractTitle(markdown: string, fallback: string): string {
@@ -32,7 +74,7 @@ export interface PipelineDeps {
   loadPrompt: (name: string) => string;
   runRole: (role: AgentRole, input: AgentInput) => Promise<string>;
   gate: Asker;              // 门1/门2/查重门共用同一个 Asker 实例
-  publish: (markdown: string) => Promise<string>; // 写飞书,返回文档 URL
+  publish: (markdown: string, placement: PlacementInfo) => Promise<string>; // 写飞书,返回文档 URL
   reviewMaxRetries?: number; // 审核打回上限,默认 2
   search?: (query: string) => Promise<string>;    // 联网搜索,返回已格式化上下文;不传则跳过
   dedup?: {
@@ -102,10 +144,15 @@ export async function runPipeline(userInput: string, deps: PipelineDeps): Promis
   const collect = (f: GateFeedback) => feedbacks.push(f);
 
   // ① 问题分析 →门1(轻):确认范围/意图
-  const qaSystem = buildSystem(deps.loadPrompt, "question-analysis", false);
+  // 将可用文件夹目录注入 system prompt（替换占位符）
+  const qaSystem = buildSystem(deps.loadPrompt, "question-analysis", false)
+    .replace("{{FOLDER_TREE}}", renderFolderTree());
   const outline1 = await iterateWithGate(
     deps, "questionAnalysis", "门1 · 确认范围/意图", qaSystem, userInput, collect,
   );
+
+  // 门1通过后，从 questionAnalysis 输出中解析归档位置和文档标题
+  const placement = parsePlacement(outline1, userInput);
 
   // 查重分流:从问题分析产出里提取关键词 → 搜旧文 → 有候选才弹查重门
   if (deps.dedup) {
@@ -170,7 +217,7 @@ export async function runPipeline(userInput: string, deps: PipelineDeps): Promis
     });
   }
 
-  const url = await deps.publish(markdown);
+  const url = await deps.publish(markdown, placement);
 
   if (deps.updateIndex) {
     const title = extractTitle(markdown, userInput);

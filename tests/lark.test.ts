@@ -29,20 +29,28 @@ describe("larkCreateDoc", () => {
       JSON.stringify({ ok: true, data: { document: { url: "https://futu.feishu.cn/docx/ABC123" } } }),
     );
     const md = "# 标题\n正文";
-    const url = await larkCreateDoc(md, "markdown", runner);
+    const url = await larkCreateDoc(md, "markdown", undefined, runner);
     expect(url).toBe("https://futu.feishu.cn/docx/ABC123");
     // 第 3 个参数(stdin)收到原始 markdown
     expect(runner).toHaveBeenCalledWith("lark-cli", buildCreateDocArgs("markdown"), md);
   });
 
+  it("passes parentToken when provided", async () => {
+    const runner = vi.fn().mockResolvedValue(
+      JSON.stringify({ ok: true, data: { document: { url: "https://futu.feishu.cn/docx/XYZ" } } }),
+    );
+    await larkCreateDoc("# T", "markdown", "parentABC", runner);
+    expect(runner).toHaveBeenCalledWith("lark-cli", buildCreateDocArgs("markdown", "parentABC"), "# T");
+  });
+
   it("throws when lark-cli reports failure", async () => {
     const runner = vi.fn().mockResolvedValue(JSON.stringify({ ok: false, error: { message: "boom" } }));
-    await expect(larkCreateDoc("# T", "markdown", runner)).rejects.toThrow(/boom/);
+    await expect(larkCreateDoc("# T", "markdown", undefined, runner)).rejects.toThrow(/boom/);
   });
 
   it("throws a clear error when stdout is not JSON", async () => {
     const runner = vi.fn().mockResolvedValue("Error: lark-cli not authenticated");
-    await expect(larkCreateDoc("# T", "markdown", runner)).rejects.toThrow(/非 JSON/);
+    await expect(larkCreateDoc("# T", "markdown", undefined, runner)).rejects.toThrow(/非 JSON/);
   });
 });
 

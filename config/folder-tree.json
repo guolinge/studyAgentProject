@@ -1,0 +1,78 @@
+{
+  "updatedAt": "2026-08-02",
+  "root": {
+    "name": "技术知识库",
+    "token": "PxeCf2XCDlnvpcd0VZXcE4M1nsh",
+    "children": [
+      {
+        "name": "前端工程",
+        "token": "OYlnfWqcul2zuQdTuEkct6amnjg",
+        "children": [
+          { "name": "框架与渲染", "token": "OsCrfa3aVlc0Eed3v3rchDMpnnd", "children": [] },
+          { "name": "工程化",     "token": "Q1DBfxEIAlbH7ZdZiU8cbQGfnJd", "children": [] },
+          { "name": "JavaScript", "token": "OH3FfIk2Nl6FKedr13HcSqYXn3x", "children": [] },
+          { "name": "TypeScript", "token": "ErzofjcOJlg2KAdnJjTccZcSnOg", "children": [] },
+          { "name": "浏览器原理", "token": "Ps5Ufb8DElzM2OdJ4hPc0XFmnuf", "children": [] },
+          { "name": "服务端",     "token": "IUGIfFbWGlYLhQdvnEdc7uL0n1f", "children": [] },
+          { "name": "UI 与交互",  "token": "SkCkfAWcnl9RAUdfK29cPBKRntg", "children": [] },
+          { "name": "性能优化",   "token": "BaySfQhkOlGRW5dzSLjcrTX8nnd", "children": [] },
+          { "name": "微前端",     "token": "Qukhf6C2NlKOcGdl3nIcdKL0n0c", "children": [] }
+        ]
+      },
+      {
+        "name": "数据库",
+        "token": "OnWNfGBwllpQ7md0SWjcuUYtnIe",
+        "children": [
+          { "name": "InnoDB 引擎",    "token": "BVwDfiqUGlJOwhdzU3Wcllb1nlc", "children": [] },
+          { "name": "索引与查询优化", "token": "RilPfYEmDlGZfjdqM0KcNjngnih", "children": [] },
+          { "name": "锁与事务",       "token": "HadcfFmwVlGvD1dcRQBcjRqgntf", "children": [] },
+          { "name": "表设计",         "token": "QwdYflWRnlxHmZd1NVlc5r7fnZd", "children": [] },
+          { "name": "高性能 MySQL",   "token": "P7kMfbY9tlavj0d1IRRcle3PnSK", "children": [] },
+          { "name": "数据库系统概念", "token": "BiWUfphGQl1LRxdhCPuceUOCnKg", "children": [] },
+          { "name": "SQLite",         "token": "Nq6GfRaQZl0D5cd4mn8cw01Envh", "children": [] },
+          { "name": "Redis",          "token": "DSlnfQyE4lAIspdj7zFcCY1jnyh", "children": [] },
+          { "name": "实操",           "token": "RTG2f346flzY8sdkVHIci84Qnie", "children": [] }
+        ]
+      },
+      {
+        "name": "计算机系统原理",
+        "token": "ZWpefGOAqlsZLedbHDkcm2aknMc",
+        "children": [
+          {
+            "name": "操作系统",
+            "token": "PL1GfLFwXlxeahdrNcJcfYAEnTe",
+            "children": [
+              { "name": "Linux 系统编程", "token": "GNpRfEujXlJ4DadiJ8YcPJxunEf", "children": [] }
+            ]
+          },
+          { "name": "计算机网络", "token": "RUpxf6lHJlIeNDdp5P3cjEv5n1d", "children": [] },
+          { "name": "分布式系统", "token": "B2tBfPmhClCgocdY6GMcwlsLn2e", "children": [] },
+          { "name": "云服务器",   "token": "XRoJffPeNlO0w3d3cm9cT5Exnqd", "children": [] }
+        ]
+      },
+      {
+        "name": "Go 语言",
+        "token": "BRXpfcZWflh2j8drIGSciRHMnUh",
+        "children": []
+      },
+      {
+        "name": "AI 与效率工具",
+        "token": "AvhbfTQWSlSc03dTupXcGoEPn4c",
+        "children": [
+          { "name": "大模型原理", "token": "WeysfcTa3lYVd7diXqEcR67Nn4g", "children": [] },
+          { "name": "工具与效率", "token": "CR6RfUcWelenOXd7mEpcxAKCngh", "children": [] }
+        ]
+      },
+      {
+        "name": "架构与系统设计",
+        "token": "Jk06fXUc6lJ5Z8djeVyc6jdSn1f",
+        "children": []
+      },
+      {
+        "name": "算法与数据结构",
+        "token": "Nvo9f5hEGljZ0Vd40k9cm0iNntg",
+        "children": []
+      }
+    ]
+  }
+}
