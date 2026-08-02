@@ -239,6 +239,20 @@ export async function larkFetchOutline(docUrl: string, runner: CliRunner = defau
   return parsed.data?.document?.content ?? "";
 }
 
+/** 读取文档完整 Markdown 正文（含【配图指令:...】占位符等原始内容）*/
+export async function larkFetchDocContent(docUrl: string, runner: CliRunner = defaultRunner): Promise<string> {
+  const args = ["docs", "+fetch", "--doc", docUrl, "--scope", "full", "--doc-format", "markdown"];
+  const stdout = await runner("lark-cli", args);
+  let parsed: { ok?: boolean; data?: { document?: { content?: string } }; error?: { message?: string } };
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    throw new Error(`lark-cli 返回非 JSON 输出:${stdout.slice(0, 200)}`);
+  }
+  if (!parsed.ok) throw new Error(`飞书读取文档内容失败:${parsed.error?.message ?? "unknown"}`);
+  return parsed.data?.document?.content ?? "";
+}
+
 // ── 锚点插入 ──────────────────────────────────────────────────────────────────
 
 /**
