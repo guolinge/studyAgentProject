@@ -224,11 +224,54 @@ async function main() {
       },
     });
 
+    // 拆分模式：逐篇跑完整流水线
+    if (result.kind === "split") {
+      console.error(`\n命题已拆分为 ${result.topics.length} 篇，逐篇生成：`);
+      for (const topic of result.topics) {
+        console.error(`\n▶ 开始生成：${topic.title}`);
+        const fixedPlacement = topic.placement;
+        const subResult = await runPipeline(topic.title, {
+          loadPrompt,
+          runRole,
+          gate: asker,
+          search,
+          dedup,
+          updateIndex,
+          // 用拆分时确认的归档位置覆盖子流水线的 publish
+          publish: async (markdown) => {
+            let folderToken: string;
+            if (fixedPlacement.type === "new") {
+              console.error(`  📁 新建文件夹「${fixedPlacement.folderName}」…`);
+              folderToken = await larkCreateFolder(fixedPlacement.folderName, fixedPlacement.parentToken);
+            } else {
+              folderToken = fixedPlacement.folderToken;
+            }
+            console.error("\n正在写入飞书(文字)…");
+            const url = await larkCreateDoc(markdown, "markdown", folderToken);
+            console.log(`\n✅ 「${topic.title}」已写入飞书:`, url);
+            if (!noDiagram) {
+              await patchDiagrams(markdown, url, {
+                loadPrompt,
+                runRole,
+                updateDoc: (u, p, c) => larkUpdateStrReplace(u, p, c),
+                onProgress: (m) => console.error(m),
+              });
+            }
+            return url;
+          },
+        });
+        if (subResult.kind === "single") {
+          console.log(`✅ 「${topic.title}」:`, subResult.url);
+        }
+      }
+      return;
+    }
+
     console.log("\n✅ 已写入飞书:", result.url);
 
     // 蒸馏器:有门反馈时自动运行,让 prompt 越用越懂用户
     // result.feedbacks 只含非空反馈(用户给了修改意见的门),无反馈时跳过
-    if (!noDistiller && result.feedbacks.length > 0) {
+    if (!noDistiller && result.kind === "single" && result.feedbacks.length > 0) {
       console.error(`\n🧪 发现 ${result.feedbacks.length} 条门反馈,正在运行蒸馏器…`);
       let changes: import("./distiller.js").ProposedChange[];
       try {

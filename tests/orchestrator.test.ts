@@ -1,5 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
-import { runPipeline, extractTitle, type PipelineDeps } from "../src/orchestrator.js";
+import { runPipeline, extractTitle, type PipelineDeps, type PipelineResult } from "../src/orchestrator.js";
+
+/** 断言结果为 single 模式并返回，使后续属性访问类型安全 */
+function asSingle(res: PipelineResult) {
+  expect(res.kind).toBe("single");
+  return res as Extract<PipelineResult, { kind: "single" }>;
+}
 
 describe("extractTitle", () => {
   it("takes the first markdown # heading", () => {
@@ -41,7 +47,7 @@ describe("runPipeline", () => {
     const gate = vi.fn().mockResolvedValue("");
     const publish = vi.fn().mockResolvedValue("https://futu.feishu.cn/docx/AAA");
 
-    const res = await runPipeline("讲讲 X", { loadPrompt, runRole, gate, publish });
+    const res = asSingle(await runPipeline("讲讲 X", { loadPrompt, runRole, gate, publish }));
 
     expect(res.url).toBe("https://futu.feishu.cn/docx/AAA");
     expect(res.skeleton).toBe("SKELETON");
@@ -98,12 +104,12 @@ describe("runPipeline", () => {
       contentReview: ["FAIL 第二节缺代码", "PASS"],
     });
     const gate = vi.fn().mockResolvedValue("");
-    const res = await runPipeline("X", {
+    const res = asSingle(await runPipeline("X", {
       loadPrompt,
       runRole,
       gate,
       publish: vi.fn().mockResolvedValue("u"),
-    });
+    }));
 
     const genCalls = calls.filter((c) => c.role === "contentGeneration");
     expect(genCalls.length).toBe(2); // 打回重生成一次
@@ -169,7 +175,7 @@ describe("runPipeline", () => {
       .mockResolvedValueOnce("1"); // 查重门:选合并第 1 篇
     const publish = vi.fn().mockResolvedValue("newurl");
 
-    const res = await runPipeline("讲讲 pnpm", { loadPrompt, runRole, gate, publish, dedup: { search, merge } });
+    const res = asSingle(await runPipeline("讲讲 pnpm", { loadPrompt, runRole, gate, publish, dedup: { search, merge } }));
 
     expect(merge).toHaveBeenCalledTimes(1);
     expect(res.url).toBe("U");
@@ -193,7 +199,7 @@ describe("runPipeline", () => {
       .mockResolvedValueOnce(""); // 门2
     const publish = vi.fn().mockResolvedValue("newurl");
 
-    const res = await runPipeline("讲讲 pnpm", { loadPrompt, runRole, gate, publish, dedup: { search, merge } });
+    const res = asSingle(await runPipeline("讲讲 pnpm", { loadPrompt, runRole, gate, publish, dedup: { search, merge } }));
 
     expect(merge).not.toHaveBeenCalled();
     expect(res.url).toBe("newurl"); // 走了新建
@@ -206,12 +212,12 @@ describe("runPipeline", () => {
       contentGeneration: "MD",
       contentReview: "PASS",
     });
-    const res = await runPipeline("X", {
+    const res = asSingle(await runPipeline("X", {
       loadPrompt,
       runRole,
       gate: vi.fn().mockResolvedValue(""),
       publish: vi.fn().mockResolvedValue("u"),
-    });
+    }));
     expect(res.feedbacks).toEqual([]);
   });
 
@@ -228,12 +234,12 @@ describe("runPipeline", () => {
       .mockResolvedValueOnce("") // 门1 通过
       .mockResolvedValueOnce("要加一节复杂度分析") // 门2 反馈
       .mockResolvedValueOnce(""); // 门2 通过
-    const res = await runPipeline("X", {
+    const res = asSingle(await runPipeline("X", {
       loadPrompt,
       runRole,
       gate,
       publish: vi.fn().mockResolvedValue("u"),
-    });
+    }));
     expect(res.feedbacks).toHaveLength(2);
     expect(res.feedbacks[0]).toEqual({ gate: "门1 · 确认范围/意图", feedback: "话题太少了" });
     expect(res.feedbacks[1]).toEqual({ gate: "门2 · 确认骨架", feedback: "要加一节复杂度分析" });
@@ -247,13 +253,13 @@ describe("runPipeline", () => {
       contentReview: "PASS",
     });
     const search = vi.fn().mockRejectedValue(new Error("net down"));
-    const res = await runPipeline("X", {
+    const res = asSingle(await runPipeline("X", {
       loadPrompt,
       runRole,
       gate: vi.fn().mockResolvedValue(""),
       publish: vi.fn().mockResolvedValue("u"),
       search,
-    });
+    }));
     expect(res.url).toBe("u"); // 搜索失败不阻断,仍 publish
   });
 });

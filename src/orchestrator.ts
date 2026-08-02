@@ -64,6 +64,45 @@ export function parsePlacement(output: string, userInputFallback: string): Place
   return { type: "existing", folderToken: folderTreeRoot.token, title };
 }
 
+/**
+ * 从 questionAnalysis 输出中解析 ## 拆分建议。
+ *
+ * 格式：`- 文档 A「标题」→ 归档：路径 [token: xxx]`
+ * 解析为 SplitDoc[]；没有该 section 时返回 null。
+ */
+export function parseSplitSuggestion(output: string): SplitDoc[] | null {
+  const sectionMatch = output.match(/^##\s*拆分建议[^\n]*\n([\s\S]*?)(?=^##|\Z)/m);
+  if (!sectionMatch) return null;
+
+  const lines = sectionMatch[1].split("\n").filter((l) => l.trim().startsWith("-"));
+  if (lines.length < 2) return null; // 少于 2 篇不算有效拆分
+
+  const docs: SplitDoc[] = [];
+  for (const line of lines) {
+    const titleMatch = line.match(/「([^」]+)」/);
+    const title = titleMatch ? titleMatch[1].trim() : "";
+    if (!title) continue;
+
+    // 提取 token（现有文件夹）或 parent_token（新建文件夹）
+    const tokenMatch = line.match(/\[token:\s*([A-Za-z0-9]+)\]/);
+    const parentMatch = line.match(/\[parent_token:\s*([A-Za-z0-9]+)\]/);
+    let placement: PlacementInfo;
+
+    if (parentMatch) {
+      const parentToken = findByToken(parentMatch[1]) ? parentMatch[1] : folderTreeRoot.token;
+      const folderMatch = line.match(/\/([^/\[→]+)\s*\[parent_token/);
+      const folderName = folderMatch ? folderMatch[1].trim() : "新建分类";
+      placement = { type: "new", parentToken, folderName, title };
+    } else if (tokenMatch && findByToken(tokenMatch[1])) {
+      placement = { type: "existing", folderToken: tokenMatch[1], title };
+    } else {
+      placement = { type: "existing", folderToken: folderTreeRoot.token, title };
+    }
+    docs.push({ title, placement });
+  }
+  return docs.length >= 2 ? docs : null;
+}
+
 /** 从生成的 Markdown 里取首个 # 标题作为文档标题(取不到就用输入回退) */
 export function extractTitle(markdown: string, fallback: string): string {
   const m = markdown.match(/^#\s+(.+)$/m);
@@ -84,12 +123,15 @@ export interface PipelineDeps {
   updateIndex?: (title: string, url: string) => Promise<void>; // 每次 publish 后追加总索引一行
 }
 
-export interface PipelineResult {
-  url: string;
-  markdown: string;
-  skeleton: string;
-  feedbacks: GateFeedback[]; // 各道门中用户给出的非空修改意见,供 Distiller 使用
+/** 拆分模式下的单篇子文档描述 */
+export interface SplitDoc {
+  title: string;
+  placement: PlacementInfo;
 }
+
+export type PipelineResult =
+  | { kind: "single"; url: string; markdown: string; skeleton: string; feedbacks: GateFeedback[] }
+  | { kind: "split"; topics: SplitDoc[] };
 
 /**
  * 拼 system prompt:角色文件(+ 可选附上 style-rules)。
@@ -154,6 +196,21 @@ export async function runPipeline(userInput: string, deps: PipelineDeps): Promis
   // 门1通过后，从 questionAnalysis 输出中解析归档位置和文档标题
   const placement = parsePlacement(outline1, userInput);
 
+  // 拆分检测：有拆分建议时弹拆分门，让用户决策
+  const splitDocs = parseSplitSuggestion(outline1);
+  if (splitDocs) {
+    const splitPrompt =
+      `检测到命题偏大，建议拆成 ${splitDocs.length} 篇：\n` +
+      splitDocs.map((d, i) => `  ${i + 1}. 「${d.title}」`).join("\n") +
+      "\n\n回车确认拆分 / 输入 n 不拆继续 / 输入修改意见重新分析";
+    const reply = await deps.gate("拆分建议", splitPrompt);
+    if (reply === "") {
+      // 用户确认拆分
+      return { kind: "split", topics: splitDocs };
+    }
+    // reply === "n" 或有修改意见时：继续当前流程（修改意见已被门迭代机制处理）
+  }
+
   // 查重分流:从问题分析产出里提取关键词 → 搜旧文 → 有候选才弹查重门
   if (deps.dedup) {
     const keywords = parseDedupKeywords(outline1);
@@ -167,7 +224,7 @@ export async function runPipeline(userInput: string, deps: PipelineDeps): Promis
         try {
           const { url, incrementalMarkdown } = await deps.dedup.merge(userInput, choice.target);
           // 合并成功:提前返回旧文档的 url,不走新建流程
-          return { url, markdown: incrementalMarkdown, skeleton: "", feedbacks };
+          return { kind: "single", url, markdown: incrementalMarkdown, skeleton: "", feedbacks };
         } catch (e) {
           // 合并失败:打印警告,降级继续新建流程(不丢用户的研究内容)
           console.error(`  ⚠ 合并失败,降级为新建:${(e as Error).message}`);
@@ -228,5 +285,5 @@ export async function runPipeline(userInput: string, deps: PipelineDeps): Promis
     }
   }
 
-  return { url, markdown, skeleton, feedbacks };
+  return { kind: "single", url, markdown, skeleton, feedbacks };
 }
