@@ -105,7 +105,8 @@ export async function renderDiagrams(markdown: string, deps: DiagramDeps): Promi
 
 export interface PatchDeps extends DiagramDeps {
   updateDoc: (docUrl: string, pattern: string, content: string) => Promise<void>;
-  onProgress?: (msg: string) => void; // 每张图补完后的进度回调(打印到 stderr)
+  onProgress?: (msg: string) => void;
+  onError?: (instruction: string, reason: string) => void; // 单张图失败回调（问题8）
 }
 
 /**
@@ -139,6 +140,7 @@ export async function patchDiagrams(
     renderDiagram(spec, context, deps).then((svg) => {
       if (!svg) {
         deps.onProgress?.(`  ⚠ 第 ${i + 1}/${specs.length} 张校验未过,保留文字占位:${spec.instruction}`);
+        deps.onError?.(spec.instruction, "SVG 校验超出重试次数");
         return;
       }
       // 追加到串行链末尾:等前一个 update 完成后再执行本次 update

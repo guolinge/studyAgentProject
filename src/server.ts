@@ -48,13 +48,20 @@ import type { AgentInput, AgentRole, ResolvedAgentConfig } from "./types.js";
 
 // ── SSE 事件类型（与 web/lib/types.ts 保持同步）─────────────────────────────
 
-export interface ProgressEvent  { type: "progress"; role: AgentRole; label: string }
-export interface GateEvent      { type: "gate";     title: string; content: string }
-export interface GateClosedEvent{ type: "gate_closed" }
-export interface DoneEvent      { type: "done"; url: string; kind: "single" | "split" }
-export interface ErrorEvent     { type: "error"; message: string }
+export interface StepStartEvent    { type: "step_start";      role: AgentRole; label: string }
+export interface ProgressEvent     { type: "progress";        role: AgentRole; label: string } // 环节完成 ✓
+export interface StepErrorEvent    { type: "step_error";      label: string; message: string }
+export interface GateEvent         { type: "gate";            title: string; content: string }
+export interface GateClosedEvent   { type: "gate_closed" }
+export interface DocCreatedEvent   { type: "doc_created";     url: string; folderName: string }
+export interface ReviewFeedbackEvent { type: "review_feedback"; content: string }
+export interface DoneEvent         { type: "done"; kind: "single" | "split" }
+export interface ErrorEvent        { type: "error"; message: string }
 export type PipelineEvent =
-  | ProgressEvent | GateEvent | GateClosedEvent | DoneEvent | ErrorEvent;
+  | StepStartEvent | ProgressEvent | StepErrorEvent
+  | GateEvent | GateClosedEvent
+  | DocCreatedEvent | ReviewFeedbackEvent
+  | DoneEvent | ErrorEvent;
 
 // ── RunState ────────────────────────────────────────────────────────────────
 
@@ -108,15 +115,17 @@ function buildDeps(runId: string) {
   const noDiagram      = process.env.NO_DIAGRAM === "1";
   const dryRun         = process.env.LARK_DRY_RUN === "1";
 
-  const runRole = (role: AgentRole, input: AgentInput) => {
+  const runRole = async (role: AgentRole, input: AgentInput) => {
     const base = resolveAgentConfig(config, role);
     const cfg: ResolvedAgentConfig = {
       ...base,
       model:  modelOverride  || base.model,
       effort: effortOverride || base.effort,
     };
-    pushEvent(runId, { type: "progress", role, label: ROLE_LABEL[role] });
-    return runAgent(input, cfg, client);
+    pushEvent(runId, { type: "step_start", role, label: ROLE_LABEL[role] }); // 环节开始
+    const result = await runAgent(input, cfg, client);
+    pushEvent(runId, { type: "progress", role, label: ROLE_LABEL[role] });   // 环节完成
+    return result;
   };
 
   const base = process.env.ANTHROPIC_BASE_URL || "";
@@ -176,23 +185,42 @@ function buildDeps(runId: string) {
       return `(dry-run)\n${md}`;
     }
     let folderToken: string;
+    let folderName: string;
     if (placement.type === "new") {
       folderToken = await larkCreateFolder(placement.folderName, placement.parentToken);
+      folderName = placement.folderName;
     } else {
       folderToken = placement.folderToken;
+      folderName = placement.title; // 已有文件夹时用文档标题作展示名
     }
     const url = await larkCreateDoc(markdown, "markdown", folderToken);
+
+    // 文字写入飞书后立刻通知前端（问题7）
+    pushEvent(runId, { type: "doc_created", url, folderName });
+
+    // 画图 fire-and-forget：不 await，让前端立即拿到链接（问题7）
     if (!noDiagram) {
-      await patchDiagrams(markdown, url, {
+      patchDiagrams(markdown, url, {
         loadPrompt, runRole,
         updateDoc: (u, p, c) => larkUpdateStrReplace(u, p, c),
         onProgress: () => {},
-      });
+        onError: (instruction, reason) =>
+          pushEvent(runId, {
+            type: "step_error",
+            label: `SVG 作图：${instruction.slice(0, 40)}`,
+            message: reason,
+          }),
+      }).catch((e) =>
+        pushEvent(runId, { type: "step_error", label: "SVG 作图", message: (e as Error).message }),
+      );
     }
     return url;
   };
 
-  return { loadPrompt, runRole, gate, publish, search, dedup, updateIndex };
+  const onReviewFeedback = (feedback: string) =>
+    pushEvent(runId, { type: "review_feedback", content: feedback });
+
+  return { loadPrompt, runRole, gate, publish, search, dedup, updateIndex, onReviewFeedback };
 }
 
 // ── Hono 应用 ─────────────────────────────────────────────────────────────────
@@ -234,11 +262,11 @@ app.post("/api/run", async (c) => {
           };
           const sub = await runPipeline(topic.title, subDeps);
           if (sub.kind === "single") {
-            pushEvent(runId, { type: "done", url: sub.url, kind: "split" });
+            pushEvent(runId, { type: "done", kind: "split" });
           }
         }
       } else {
-        pushEvent(runId, { type: "done", url: result.url, kind: "single" });
+        pushEvent(runId, { type: "done", kind: "single" });
       }
     } catch (e) {
       pushEvent(runId, { type: "error", message: (e as Error).message });

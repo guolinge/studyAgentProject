@@ -121,6 +121,7 @@ export interface PipelineDeps {
     merge: (userInput: string, target: SearchHit) => Promise<{ url: string; incrementalMarkdown: string }>;
   };
   updateIndex?: (title: string, url: string) => Promise<void>; // 每次 publish 后追加总索引一行
+  onReviewFeedback?: (feedback: string) => void; // 内容审核 FAIL 时推送反馈内容（问题6）
 }
 
 /** 拆分模式下的单篇子文档描述 */
@@ -267,6 +268,7 @@ export async function runPipeline(userInput: string, deps: PipelineDeps): Promis
       user: `【骨架】\n${skeleton}\n\n【正文】\n${markdown}`,
     });
     if (/^\s*PASS/.test(verdict)) break; // 通过,退出审核循环
+    deps.onReviewFeedback?.(verdict); // 把审核意见推给前端（问题6）
     // 把审核问题拼进 user,让生成 agent 针对性修补
     markdown = await deps.runRole("contentGeneration", {
       system: genSystem,

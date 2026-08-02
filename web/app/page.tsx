@@ -28,12 +28,15 @@ interface State {
   status: Status;
   runId: string | null;
   events: PipelineEvent[];
+  docUrl: string | null;
+  docFolder: string | null;
   refreshMsg: string;
 }
 
 type Action =
   | { type: "START"; runId: string }
   | { type: "EVENT"; event: PipelineEvent }
+  | { type: "DOC_CREATED"; url: string; folderName: string }
   | { type: "DONE" }
   | { type: "ERROR" }
   | { type: "REFRESH_MSG"; msg: string }
@@ -41,17 +44,18 @@ type Action =
 
 function reducer(state: State, action: Action): State {
   switch (action.type) {
-    case "START":   return { ...state, status: "running", runId: action.runId, events: [] };
-    case "EVENT":   return { ...state, events: [...state.events, action.event] };
-    case "DONE":    return { ...state, status: "done" };
-    case "ERROR":   return { ...state, status: "error" };
+    case "START":       return { ...state, status: "running", runId: action.runId, events: [], docUrl: null, docFolder: null };
+    case "EVENT":       return { ...state, events: [...state.events, action.event] };
+    case "DOC_CREATED": return { ...state, docUrl: action.url, docFolder: action.folderName };
+    case "DONE":        return { ...state, status: "done" };
+    case "ERROR":       return { ...state, status: "error" };
     case "REFRESH_MSG": return { ...state, refreshMsg: action.msg };
-    case "RESET":   return { status: "idle", runId: null, events: [], refreshMsg: "" };
-    default:        return state;
+    case "RESET":       return { status: "idle", runId: null, events: [], docUrl: null, docFolder: null, refreshMsg: "" };
+    default:            return state;
   }
 }
 
-const INIT: State = { status: "idle", runId: null, events: [], refreshMsg: "" };
+const INIT: State = { status: "idle", runId: null, events: [], docUrl: null, docFolder: null, refreshMsg: "" };
 
 export default function Home() {
   const [state, dispatch] = useReducer(reducer, INIT);
@@ -65,7 +69,11 @@ export default function Home() {
       const runId = await startRun(topic);
       dispatch({ type: "START", runId });
       closeSSERef.current = openEventStream(runId, (event) => {
-        dispatch({ type: "EVENT", event });
+        if (event.type === "doc_created") {
+          dispatch({ type: "DOC_CREATED", url: event.url, folderName: event.folderName });
+        } else {
+          dispatch({ type: "EVENT", event });
+        }
         if (event.type === "done" || event.type === "error") {
           closeSSERef.current?.();
           dispatch({ type: event.type === "done" ? "DONE" : "ERROR" });
@@ -164,6 +172,35 @@ export default function Home() {
             </div>
           </div>
         </div>
+
+        {/* 飞书文档卡片（文字写入后立即出现，不等画图）*/}
+        {(isRunning || state.status === "done") && (
+          <div className="w-full mb-4 border border-gray-200 rounded-xl bg-white p-4 shadow-sm flex items-center gap-3">
+            <span className="text-lg">📄</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs text-gray-400 mb-0.5">飞书文档</p>
+              {state.docUrl ? (
+                <>
+                  <a
+                    href={state.docUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-indigo-600 text-sm hover:underline break-all leading-snug"
+                  >
+                    {state.docUrl}
+                  </a>
+                  {state.docFolder && (
+                    <p className="text-xs text-gray-400 mt-0.5">📁 {state.docFolder}</p>
+                  )}
+                </>
+              ) : (
+                <p className="text-sm text-gray-400 flex items-center gap-2">
+                  <span className="inline-block animate-spin">◌</span> 写入中…
+                </p>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* 进度日志 */}
         <ProgressLog events={state.events} onGateSubmit={handleGateSubmit} runId={state.runId} />
