@@ -14,10 +14,11 @@
  *   历史刷新  historyTick（新 run 完成后递增，触发 HistoryPanel 重拉）
  */
 
-import { useReducer, useRef, useCallback } from "react";
+import { useReducer, useRef, useCallback, useState } from "react";
 import HistoryPanel from "@/components/HistoryPanel";
 import StepsSidebar from "@/components/StepsSidebar";
 import GateViewer from "@/components/GateViewer";
+import StreamingCard from "@/components/StreamingCard";
 import { startRun, openEventStream, submitGate, refreshFolderTree, getRunDetail } from "@/lib/api";
 import type { PipelineEvent, GateEvent, HistoryItem, StepStat } from "@/lib/types";
 
@@ -159,6 +160,8 @@ function getTailEvents(events: PipelineEvent[]) {
 
 export default function Home() {
   const [state, dispatch] = useReducer(reducer, INIT);
+  // 流式输出临时状态（不入 events 数组，不持久化）
+  const [streamingDelta, setStreamingDelta] = useState<{ label: string; text: string } | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const closeSSERef = useRef<(() => void) | null>(null);
 
@@ -167,17 +170,33 @@ export default function Home() {
     if (!topic || state.status === "running") return;
     try {
       const runId = await startRun(topic);
+      setStreamingDelta(null);
       dispatch({ type: "START", runId });
       closeSSERef.current = openEventStream(runId, (event) => {
+        // step_delta 只更新临时流式状态，不进 events 数组
+        if (event.type === "step_delta") {
+          setStreamingDelta((prev) =>
+            prev?.label === event.label
+              ? { label: event.label, text: prev.text + event.delta }
+              : { label: event.label, text: event.delta },
+          );
+          return;
+        }
+        // step_start / progress 清空流式状态（旧步骤结束 / 新步骤开始）
+        if (event.type === "step_start" || event.type === "progress") {
+          setStreamingDelta(null);
+        }
         if (event.type === "doc_created") {
           dispatch({ type: "DOC_CREATED", url: event.url, folderName: event.folderName });
         }
         dispatch({ type: "EVENT", event });
         if (event.type === "done") {
           closeSSERef.current?.();
+          setStreamingDelta(null);
           dispatch({ type: "DONE" });
         } else if (event.type === "error") {
           closeSSERef.current?.();
+          setStreamingDelta(null);
           dispatch({ type: "ERROR" });
         }
       });
@@ -383,6 +402,13 @@ export default function Home() {
                   </p>
                 )}
               </div>
+            </div>
+          )}
+
+          {/* 流式输出卡片（当前步骤实时输出，仅当前运行时显示） */}
+          {!isViewMode && streamingDelta && (
+            <div className="w-full max-w-2xl mx-auto">
+              <StreamingCard label={streamingDelta.label} text={streamingDelta.text} />
             </div>
           )}
 

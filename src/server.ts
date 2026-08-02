@@ -68,10 +68,11 @@ export interface GateEvent         { type: "gate";            title: string; con
 export interface GateClosedEvent   { type: "gate_closed" }
 export interface DocCreatedEvent   { type: "doc_created";     url: string; folderName: string }
 export interface ReviewFeedbackEvent { type: "review_feedback"; content: string }
+export interface StepDeltaEvent    { type: "step_delta";     role: AgentRole; label: string; delta: string }
 export interface DoneEvent         { type: "done"; kind: "single" | "split" }
 export interface ErrorEvent        { type: "error"; message: string }
 export type PipelineEvent =
-  | StepStartEvent | ProgressEvent | StepErrorEvent
+  | StepStartEvent | ProgressEvent | StepErrorEvent | StepDeltaEvent
   | GateEvent | GateClosedEvent
   | DocCreatedEvent | ReviewFeedbackEvent
   | DoneEvent | ErrorEvent;
@@ -135,7 +136,15 @@ function buildDeps(runId: string) {
     // 包装 SDK client 以捕获每次 API 调用的 token 用量
     const wrappedClient: ModelClient = {
       createMessage: async (params) => {
-        const msg = await (sdk.messages.stream(params as never).finalMessage() as any);
+        const stream = sdk.messages.stream(params as never);
+        // 把每个 text delta 直接推给 SSE 订阅者（不入 DB，不入 eventQueue）
+        (stream as any).on("text", (delta: string) => {
+          const run = runs.get(runId);
+          if (!run) return;
+          const e: StepDeltaEvent = { type: "step_delta", role, label: ROLE_LABEL[role], delta };
+          run.subscribers.forEach((fn) => fn(e));
+        });
+        const msg = await (stream.finalMessage() as any);
         inputTok += (msg.usage?.input_tokens ?? 0);
         outputTok += (msg.usage?.output_tokens ?? 0);
         return msg;

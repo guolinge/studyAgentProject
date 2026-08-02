@@ -5,6 +5,7 @@ export interface GateEvent           { type: "gate";            title: string; c
 export interface GateClosedEvent     { type: "gate_closed" }
 export interface DocCreatedEvent     { type: "doc_created";     url: string; folderName: string }
 export interface ReviewFeedbackEvent { type: "review_feedback"; content: string }
+export interface StepDeltaEvent      { type: "step_delta";      role: string; label: string; delta: string }
 export interface DoneEvent           { type: "done";            kind: "single" | "split" }
 export interface ErrorEvent          { type: "error";           message: string }
 
@@ -12,6 +13,7 @@ export type PipelineEvent =
   | StepStartEvent
   | ProgressEvent
   | StepErrorEvent
+  | StepDeltaEvent
   | GateEvent
   | GateClosedEvent
   | DocCreatedEvent
