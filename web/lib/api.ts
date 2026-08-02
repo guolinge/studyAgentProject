@@ -8,7 +8,7 @@
  * 返回一个 close 函数，组件卸载或流水线结束时调用以避免内存泄漏。
  */
 
-import type { PipelineEvent } from "./types";
+import type { PipelineEvent, HistoryItem, StepStat } from "./types";
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
@@ -49,4 +49,19 @@ export async function submitGate(runId: string, reply: string): Promise<void> {
 export async function refreshFolderTree(): Promise<{ ok: boolean; updatedAt?: string; reason?: string }> {
   const res = await fetch(`${BASE}/api/folder-tree/refresh`, { method: "POST" });
   return res.json();
+}
+
+export async function getHistory(q?: string): Promise<HistoryItem[]> {
+  const url = q ? `${BASE}/api/history?q=${encodeURIComponent(q)}` : `${BASE}/api/history`;
+  const res = await fetch(url);
+  return res.json();
+}
+
+export async function getRunDetail(id: string): Promise<{ events: PipelineEvent[]; steps: StepStat[] }> {
+  const res = await fetch(`${BASE}/api/history/${id}`);
+  return res.json();
+}
+
+export async function deleteRun(id: string): Promise<void> {
+  await fetch(`${BASE}/api/history/${id}`, { method: "DELETE" });
 }

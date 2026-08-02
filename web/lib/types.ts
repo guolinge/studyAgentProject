@@ -18,3 +18,24 @@ export type PipelineEvent =
   | ReviewFeedbackEvent
   | DoneEvent
   | ErrorEvent;
+
+export interface HistoryItem {
+  id: string;
+  topic: string;
+  docTitle: string | null;
+  docUrl: string | null;
+  docFolder: string | null;
+  status: "running" | "done" | "error";
+  totalTokens: number;
+  totalDurationMs: number;
+  createdAt: number;
+}
+
+export interface StepStat {
+  role: string;
+  label: string;
+  inputTokens: number;
+  outputTokens: number;
+  durationMs: number;
+  startedAt: number;
+}
