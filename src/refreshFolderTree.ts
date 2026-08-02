@@ -20,16 +20,42 @@ export type RefreshResult =
   | { ok: true; updatedAt: string }
   | { ok: false; reason: string };
 
+const INTER_REQUEST_DELAY_MS = 300; // 飞书 API 限流保护，每次请求间隔
+
 /**
  * 列出 folderToken 下的直接子文件夹，返回 FolderNode[]（children 为空，等待下一层递归填充）。
  *
- * 只抓取 type=folder 的条目，跳过文档、快捷方式等其他类型。
- * JSON 解析失败或 ok=false 时直接抛错，由上层 buildTree 捕获并决定是否降级。
+ * lark-cli drive files list 没有 --type 过滤参数，在代码里按 type===folder 筛选。
+ * exit 非 0 时 defaultRunner 会把 stderr/stdout 拼进错误信息，这里尝试从中解析
+ * 结构化错误（限流、认证失败等），给出更精确的提示。
  */
 async function listChildren(folderToken: string): Promise<FolderNode[]> {
-  // lark-cli drive files list 没有 --type 过滤参数，在代码里按 type===folder 筛选
   const args = ["drive", "files", "list", "--folder-token", folderToken, "--as", "user"];
-  const stdout = await defaultRunner("lark-cli", args);
+  let stdout: string;
+  try {
+    stdout = await defaultRunner("lark-cli", args);
+  } catch (e) {
+    const raw = (e as Error).message;
+    // 尝试从错误信息里提取 JSON（defaultRunner 把 stdout/stderr 拼在冒号后面）
+    const jsonStart = raw.indexOf("{");
+    if (jsonStart !== -1) {
+      try {
+        const body = JSON.parse(raw.slice(jsonStart)) as {
+          error?: { subtype?: string; message?: string; code?: number };
+        };
+        const sub = body.error?.subtype ?? "";
+        const msg = body.error?.message ?? raw;
+        if (sub === "rate_limit") throw new Error(`飞书 API 限流 (code ${body.error?.code})，请稍候再试`);
+        if (sub === "unauthorized" || sub === "forbidden") throw new Error(`飞书认证失败：${msg}`);
+        throw new Error(msg);
+      } catch (parseErr) {
+        // JSON 解析本身失败，直接重新抛原始错误
+        if ((parseErr as Error).message !== raw) throw parseErr;
+      }
+    }
+    // 命令不存在或其他非结构化错误
+    throw new Error(`lark-cli 不可用：${raw}`);
+  }
   const parsed = JSON.parse(stdout) as {
     ok?: boolean;
     data?: { files?: Array<{ name?: string; token?: string; type?: string }> };
@@ -43,12 +69,16 @@ async function listChildren(folderToken: string): Promise<FolderNode[]> {
 
 /**
  * 从给定节点出发，递归构建完整子树。
- * 使用 Promise.all 并发拉取同级兄弟节点的子项，减少总 RTT。
- * 飞书文件夹层级一般不超过 3 层，不会有栈溢出风险。
+ * 串行遍历子节点（而非 Promise.all 并发），避免短时间内大量请求触发飞书限流。
+ * 每次请求间插入 INTER_REQUEST_DELAY_MS 的延迟。
  */
 async function buildTree(node: FolderNode): Promise<FolderNode> {
   const children = await listChildren(node.token);
-  const resolved = await Promise.all(children.map((c) => buildTree(c)));
+  const resolved: FolderNode[] = [];
+  for (const child of children) {
+    await new Promise((r) => setTimeout(r, INTER_REQUEST_DELAY_MS));
+    resolved.push(await buildTree(child));
+  }
   return { ...node, children: resolved };
 }
 
@@ -70,11 +100,7 @@ export async function refreshFolderTree(): Promise<RefreshResult> {
     // 保留根节点的 name/token，只重建 children
     newRoot = await buildTree({ name: root.name, token: root.token, children: [] });
   } catch (e) {
-    const msg = (e as Error).message;
-    if (msg.includes("unknown command") || msg.includes("exit") || msg.includes("not found")) {
-      return { ok: false, reason: `lark-cli drive files list 不可用：${msg}` };
-    }
-    return { ok: false, reason: msg };
+    return { ok: false, reason: (e as Error).message };
   }
 
   const updatedAt = new Date().toISOString().split("T")[0];
