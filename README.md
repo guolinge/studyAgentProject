@@ -92,7 +92,25 @@ ANTHROPIC_BASE_URL=https://llm-proxy.example.com
 
 ## 使用方法
 
-**基本用法**
+### Web 界面（推荐）
+
+```bash
+# 安装前端依赖（首次）
+npm install
+npm --prefix web install
+
+# 同时启动后端(3001) + 前端(3000)，3 秒后自动打开浏览器
+npm run dev
+```
+
+浏览器打开后，在输入框粘贴知识点，点击"生成"即可。
+
+> **端口冲突**：若报 `EADDRINUSE`，用以下命令清理旧进程再重启：
+> ```bash
+> kill -9 $(lsof -nP -iTCP:3000,3001 -sTCP:LISTEN | awk 'NR>1 {print $2}') 2>/dev/null
+> ```
+
+### CLI（命令行）
 
 ```bash
 npm start -- "你想搞懂的知识点"
