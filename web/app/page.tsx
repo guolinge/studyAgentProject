@@ -213,8 +213,13 @@ export default function Home() {
   }, []);
 
   const handleSelectGate = useCallback((title: string, content: string) => {
-    dispatch({ type: "SELECT_GATE", gate: { title, content } });
-  }, []);
+    // 再次点击同一个门 → 取消选中（回到默认视图）
+    if (state.selectedGate?.title === title) {
+      dispatch({ type: "SELECT_GATE", gate: null });
+    } else {
+      dispatch({ type: "SELECT_GATE", gate: { title, content } });
+    }
+  }, [state.selectedGate]);
 
   // 拖拽引用：从 dataTransfer 取 { topic, docUrl } 追加到 textarea
   const handleDrop = useCallback((e: React.DragEvent<HTMLTextAreaElement>) => {
@@ -249,7 +254,8 @@ export default function Home() {
   const displayGate: GateEvent | null = state.selectedGate
     ? { type: "gate", title: state.selectedGate.title, content: state.selectedGate.content }
     : activeGate;
-  const gateReadOnly = state.selectedGate !== null;
+  // 只有选中的是「已关闭」的历史门时才只读；选中 active gate 仍可交互
+  const gateReadOnly = state.selectedGate !== null && activeGate?.title !== state.selectedGate.title;
 
   const tailEvents = getTailEvents(isViewMode ? state.viewEvents : state.events);
 
