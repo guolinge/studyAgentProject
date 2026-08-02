@@ -262,7 +262,32 @@ function buildDeps(runId: string) {
   const onReviewFeedback = (feedback: string) =>
     pushEvent(runId, { type: "review_feedback", content: feedback });
 
-  return { loadPrompt, runRole, gate, publish, search, dedup, updateIndex, onReviewFeedback };
+  const patchDocDiagrams = async (docUrl: string) => {
+    pushEvent(runId, { type: "step_start", role: "diagramSvg", label: "读取原文档" });
+    const content = await larkFetchDocContent(docUrl);
+    const specs = extractDiagramSpecs(content);
+    pushEvent(runId, { type: "progress", role: "diagramSvg", label: "读取原文档" });
+    if (specs.length === 0) {
+      throw new Error("文档中未找到【配图指令:...】占位符，无法补画配图");
+    }
+    pushEvent(runId, { type: "doc_created", url: docUrl, folderName: "（原文档）" });
+    dbSetDocUrl(runId, docUrl, "（原文档）");
+    const result = await patchDiagrams(content, docUrl, {
+      loadPrompt,
+      runRole,
+      updateDoc: (u, p, c) => larkUpdateStrReplace(u, p, c),
+      onProgress: () => {},
+      onError: (instruction, reason) =>
+        pushEvent(runId, {
+          type: "step_error",
+          label: `SVG 作图：${instruction.slice(0, 40)}`,
+          message: reason,
+        }),
+    });
+    return { url: docUrl, patched: result.patched, total: result.total };
+  };
+
+  return { loadPrompt, runRole, gate, publish, search, dedup, updateIndex, onReviewFeedback, patchDocDiagrams };
 }
 
 // ── Hono 应用 ─────────────────────────────────────────────────────────────────
@@ -273,10 +298,8 @@ app.use("*", cors());
 
 app.get("/health", (c) => c.json({ ok: true }));
 
-// 飞书文档 URL 模式（用于拖拽引用 outline 注入 / 补图检测）
+// 飞书文档 URL 模式（用于拖拽引用 outline 注入）
 const FEISHU_URL_RE = /https?:\/\/[a-z0-9-]+\.feishu\.cn\/\S+/i;
-// 补图意图关键词（有飞书 URL + 下列任一词 → 走补图路径而非新建文档）
-const PATCH_DIAGRAM_RE = /配图|画图|补图|绘图|diagram|画一下|补一下|重新画/i;
 
 // 启动流水线
 app.post("/api/run", async (c) => {
@@ -290,60 +313,9 @@ app.post("/api/run", async (c) => {
   // 后台异步跑，不 await
   (async () => {
     try {
-      const urlMatch = rawTopic.match(FEISHU_URL_RE);
-
-      // ── 补图路径：飞书 URL + 配图关键词 → 直接对现有文档补画 SVG ──────────────
-      if (urlMatch && PATCH_DIAGRAM_RE.test(rawTopic)) {
-        const docUrl = urlMatch[0].replace(/[）\)。，,]+$/, ""); // 去掉末尾可能的标点
-        try {
-          pushEvent(runId, { type: "step_start", role: "diagramSvg", label: "读取原文档" });
-          const content = await larkFetchDocContent(docUrl);
-          const specs = extractDiagramSpecs(content);
-          pushEvent(runId, { type: "progress", role: "diagramSvg", label: "读取原文档" });
-
-          if (specs.length === 0) {
-            pushEvent(runId, {
-              type: "step_error",
-              label: "补图",
-              message: "文档中未找到【配图指令:...】占位符，无法补图",
-            });
-            pushEvent(runId, { type: "error", message: "文档中未找到配图指令，无需补图" });
-            dbSetStatus(runId, "error");
-            return;
-          }
-
-          // 通知前端文档链接（复用已有文档）
-          pushEvent(runId, { type: "doc_created", url: docUrl, folderName: "（原文档）" });
-          dbSetDocUrl(runId, docUrl, "（原文档）");
-
-          await patchDiagrams(content, docUrl, {
-            loadPrompt,
-            runRole: deps.runRole,
-            updateDoc: (u, p, c) => larkUpdateStrReplace(u, p, c),
-            onProgress: () => {},
-            onError: (instruction, reason) =>
-              pushEvent(runId, {
-                type: "step_error",
-                label: `SVG 作图：${instruction.slice(0, 40)}`,
-                message: reason,
-              }),
-          });
-
-          dbSetStatus(runId, "done");
-          pushEvent(runId, { type: "done", kind: "single" });
-          return; // 不走 runPipeline，直接结束
-        } catch (e) {
-          // 补图路径失败 → 降级走普通流水线
-          pushEvent(runId, {
-            type: "step_error",
-            label: "读取原文档",
-            message: (e as Error).message,
-          });
-        }
-      }
-
-      // ── 普通路径：拖拽引用时预取大纲作上下文 ────────────────────────────────────
+      // 拖拽引用：若 topic 含飞书 URL，预取大纲注入上下文（LLM 据此判断操作类型）
       let userInput = rawTopic;
+      const urlMatch = rawTopic.match(FEISHU_URL_RE);
       if (urlMatch) {
         try {
           const outline = await larkFetchOutline(urlMatch[0]);
@@ -351,7 +323,7 @@ app.post("/api/run", async (c) => {
             userInput = `## 引用文档大纲\n\n${outline}\n\n---\n\n${rawTopic}`;
           }
         } catch {
-          // 预取失败不阻断
+          // 预取失败不阻断，直接用原始 topic
         }
       }
 

@@ -109,6 +109,23 @@ export function extractTitle(markdown: string, fallback: string): string {
   return (m?.[1] ?? fallback).trim();
 }
 
+interface OperationType {
+  mode: "create" | "patch_diagrams";
+  docUrl?: string;
+}
+
+/** 解析 question-analysis 输出中的 `## 操作类型` section，默认 create */
+export function parseOperationType(outline: string): OperationType {
+  const match = outline.match(/##\s*操作类型[^\n]*\n([\s\S]*?)(?=\n##|$)/);
+  if (!match) return { mode: "create" };
+  const block = match[1].trim();
+  if (/^patch_diagrams/i.test(block)) {
+    const urlMatch = block.match(/https?:\/\/[^\s)）,，。\]]+/);
+    return { mode: "patch_diagrams", docUrl: urlMatch?.[0] };
+  }
+  return { mode: "create" };
+}
+
 export interface PipelineDeps {
   loadPrompt: (name: string) => string;
   runRole: (role: AgentRole, input: AgentInput) => Promise<string>;
@@ -122,6 +139,8 @@ export interface PipelineDeps {
   };
   updateIndex?: (title: string, url: string) => Promise<void>; // 每次 publish 后追加总索引一行
   onReviewFeedback?: (feedback: string) => void; // 内容审核 FAIL 时推送反馈内容（问题6）
+  /** 在现有飞书文档上补画 SVG 配图（由 question-analysis 的 patch_diagrams 操作类型触发）*/
+  patchDocDiagrams?: (docUrl: string) => Promise<{ url: string; patched: number; total: number }>;
 }
 
 /** 拆分模式下的单篇子文档描述 */
@@ -194,7 +213,14 @@ export async function runPipeline(userInput: string, deps: PipelineDeps): Promis
     deps, "questionAnalysis", "门1 · 确认范围/意图", qaSystem, userInput, collect,
   );
 
-  // 门1通过后，从 questionAnalysis 输出中解析归档位置和文档标题
+  // 门1通过后，先检查操作类型（patch_diagrams 时直接补图，不走新建流程）
+  const opType = parseOperationType(outline1);
+  if (opType.mode === "patch_diagrams" && opType.docUrl && deps.patchDocDiagrams) {
+    const { url } = await deps.patchDocDiagrams(opType.docUrl);
+    return { kind: "single", url, markdown: "", skeleton: "", feedbacks };
+  }
+
+  // 从 questionAnalysis 输出中解析归档位置和文档标题
   const placement = parsePlacement(outline1, userInput);
 
   // 拆分检测：有拆分建议时弹拆分门，让用户决策
