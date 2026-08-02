@@ -76,6 +76,7 @@ function reducer(state: State, action: Action): State {
         viewDocFolder: null,
         viewDocTitle: null,
         selectedGate: null,
+        historyTick: state.historyTick + 1, // 立即刷新左侧栏（dbCreateRun 已写库）
       };
     case "EVENT":
       return { ...state, events: [...state.events, action.event] };
