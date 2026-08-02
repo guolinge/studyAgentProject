@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>StudyAgent UI Mockup</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: #0f1117;
+  color: #e2e8f0;
+  font-family: 'SF Mono', 'Consolas', monospace;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── 顶栏 ── */
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 24px;
+  border-bottom: 1px solid #1e2535;
+  background: #0a0d14;
+}
+.topbar-logo {
+  font-size: 15px;
+  font-weight: 600;
+  color: #7c8cff;
+  letter-spacing: .5px;
+}
+.btn-refresh {
+  background: none;
+  border: 1px solid #2a3348;
+  color: #8899aa;
+  padding: 5px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: inherit;
+  transition: all .15s;
+}
+.btn-refresh:hover { border-color: #4a5568; color: #cbd5e0; }
+.btn-refresh.loading { color: #7c8cff; border-color: #7c8cff44; }
+
+/* ── 主体 ── */
+.main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 48px 24px 80px;
+  max-width: 760px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+/* ── 输入区 ── */
+.input-section { width: 100%; margin-bottom: 40px; }
+.input-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.input-label {
+  font-size: 11px;
+  color: #4a5568;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+}
+.input-modes {
+  display: flex;
+  gap: 6px;
+}
+.mode-tag {
+  font-size: 11px;
+  color: #4a5568;
+  background: #161b27;
+  border: 1px solid #2a3348;
+  border-radius: 4px;
+  padding: 2px 8px;
+  cursor: default;
+}
+.input-box {
+  width: 100%;
+  background: #161b27;
+  border: 1px solid #2a3348;
+  border-radius: 10px;
+  color: #e2e8f0;
+  font-family: inherit;
+  font-size: 14px;
+  padding: 14px 16px;
+  outline: none;
+  transition: border-color .15s;
+  resize: vertical;
+  min-height: 120px;
+  line-height: 1.6;
+}
+.input-box:focus { border-color: #7c8cff66; }
+.input-box::placeholder { color: #3a4557; line-height: 1.8; }
+.input-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+}
+.input-hint {
+  font-size: 11px;
+  color: #2a3348;
+}
+.btn-run {
+  background: #7c8cff;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 22px;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .15s;
+  white-space: nowrap;
+}
+.btn-run:hover { background: #6b7df0; }
+.btn-run:disabled { background: #2a3348; color: #4a5568; cursor: default; }
+
+/* ── 进度日志 ── */
+.log-section { width: 100%; }
+.log-header {
+  font-size: 11px;
+  color: #4a5568;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  margin-bottom: 12px;
+}
+.log-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 40px;
+}
+
+/* 进度行 */
+.log-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 1.5;
+  animation: fadeIn .2s ease;
+}
+@keyframes fadeIn { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:none; } }
+
+.log-item.progress { color: #8899aa; }
+.log-item.progress .icon { color: #4a5568; }
+.log-item.progress.running { color: #a0b0c8; background: #161b27; }
+.log-item.progress.running .icon { color: #7c8cff; }
+.log-item.done-item { color: #68d391; background: #0f1e14; }
+.log-item.done-item .icon { color: #48bb78; }
+.log-item.error-item { color: #fc8181; background: #1e0f0f; }
+.log-item.error-item .icon { color: #e53e3e; }
+
+/* gate 卡片 */
+.gate-card {
+  width: 100%;
+  border: 1px solid #4a5568;
+  border-radius: 10px;
+  background: #161b27;
+  overflow: hidden;
+  animation: fadeIn .25s ease;
+  margin: 8px 0;
+}
+.gate-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: #1e2535;
+  border-bottom: 1px solid #2a3348;
+  font-size: 12px;
+  color: #7c8cff;
+  font-weight: 600;
+}
+.gate-card-content {
+  padding: 14px 16px;
+  font-size: 13px;
+  color: #a0b0c8;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.gate-card-content::-webkit-scrollbar { width: 4px; }
+.gate-card-content::-webkit-scrollbar-track { background: transparent; }
+.gate-card-content::-webkit-scrollbar-thumb { background: #2a3348; border-radius: 2px; }
+.gate-input-row {
+  display: flex;
+  gap: 8px;
+  padding: 12px 14px;
+  background: #0f1117;
+  border-top: 1px solid #1e2535;
+}
+.gate-input {
+  flex: 1;
+  background: #161b27;
+  border: 1px solid #2a3348;
+  border-radius: 6px;
+  color: #e2e8f0;
+  font-family: inherit;
+  font-size: 13px;
+  padding: 8px 12px;
+  outline: none;
+}
+.gate-input:focus { border-color: #7c8cff66; }
+.gate-input::placeholder { color: #3a4557; }
+.btn-pass {
+  background: #2a3348;
+  border: none;
+  border-radius: 6px;
+  color: #a0b0c8;
+  padding: 8px 14px;
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background .15s;
+}
+.btn-pass:hover { background: #3a4b62; color: #e2e8f0; }
+.btn-pass.primary {
+  background: #7c8cff;
+  color: #fff;
+}
+.btn-pass.primary:hover { background: #6b7df0; }
+
+/* 完成卡片 */
+.done-card {
+  width: 100%;
+  border: 1px solid #276749;
+  border-radius: 10px;
+  background: #0f2019;
+  padding: 18px 20px;
+  animation: fadeIn .3s ease;
+  margin: 8px 0;
+}
+.done-card-title {
+  font-size: 12px;
+  color: #68d391;
+  font-weight: 600;
+  margin-bottom: 8px;
+  letter-spacing: .5px;
+}
+.done-card-url {
+  font-size: 13px;
+  color: #90cdf4;
+  text-decoration: none;
+  word-break: break-all;
+}
+.done-card-url:hover { text-decoration: underline; }
+
+/* 演示控制条 */
+.demo-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0; right: 0;
+  background: #0a0d14;
+  border-top: 1px solid #1e2535;
+  padding: 10px 24px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: #4a5568;
+}
+.demo-bar span { margin-right: 4px; color: #2a3348; }
+.btn-demo {
+  background: #161b27;
+  border: 1px solid #2a3348;
+  color: #8899aa;
+  padding: 4px 12px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 11px;
+  font-family: inherit;
+  transition: all .12s;
+}
+.btn-demo:hover { border-color: #4a5568; color: #cbd5e0; background: #1e2535; }
+
+/* spinner */
+@keyframes spin { to { transform: rotate(360deg); } }
+.spin { display: inline-block; animation: spin .8s linear infinite; }
+</style>
+</head>
+<body>
+
+<!-- 顶栏 -->
+<div class="topbar">
+  <div class="topbar-logo">✦ StudyAgent</div>
+  <button class="btn-refresh" id="btnRefresh" onclick="doRefresh()">↻ 刷新文件夹树</button>
+</div>
+
+<!-- 主体 -->
+<div class="main">
+
+  <!-- 输入区 -->
+  <div class="input-section">
+    <div class="input-label-row">
+      <div class="input-label">输入内容</div>
+      <div class="input-modes">
+        <span class="mode-tag">短问题</span>
+        <span class="mode-tag">问题 + 答案</span>
+        <span class="mode-tag">链接</span>
+      </div>
+    </div>
+    <textarea class="input-box" id="topicInput" rows="5"
+      placeholder="支持三种输入方式：
+
+① 短问题：pnpm 的原理是什么
+
+② 问题 + AI 回答（整理/拓展）：
+   问题：...
+   回答：...（从 AI 中台粘贴过来）
+
+③ 链接（微信公众号、网页）：
+   https://...
+   我想了解里面的 XX 概念"></textarea>
+    <div class="input-footer">
+      <span class="input-hint">Shift+Enter 换行 · Enter 提交</span>
+      <button class="btn-run" id="btnRun" onclick="startDemo()">生成 →</button>
+    </div>
+  </div>
+
+  <!-- 进度日志 -->
+  <div class="log-section">
+    <div class="log-header" id="logHeader" style="display:none">运行日志</div>
+    <div class="log-list" id="logList"></div>
+  </div>
+
+</div>
+
+<script>
+const ROLES = [
+  { role: "questionAnalysis",    label: "问题分析" },
+  { role: "contentOrganization", label: "内容组织" },
+  { role: "contentGeneration",   label: "内容生成" },
+  { role: "contentReview",       label: "内容审核" },
+];
+
+const GATE1_CONTENT = `## 意图
+讲清楚防抖 debounce 的原理，包含问题背景、实现推导、边界取舍，深度偏"能自己写出来"。
+
+## 一级话题
+- 问题场景：连续触发为什么是灾难
+- 推导：延迟 + 重置定时器
+- 实现：闭包版 debounce（带注释）
+- 边界与取舍：leading edge、节流 throttle 对比
+
+## 文档标题
+防抖 debounce：把高频触发塌缩成一次
+
+## 归档位置
+前端工程 / JavaScript [token: OH3Ff...]`;
+
+const GATE2_CONTENT = `# 防抖 debounce：把高频触发塌缩成一次
+
+## 1. 问题：连续触发为什么是灾难
+### 1.1 搜索框 keyup 每敲一下都发请求
+
+## 2. 推导：延迟 + 重置
+### 2.1 朴素方案（纯延迟）与它的缺陷
+### 2.2 关键一步：每次触发都重置定时器
+
+## 3. 实现
+### 3.1 闭包版 debounce（带注释）
+
+## 4. 边界与取舍
+### 4.1 why-not 节流 throttle
+### 4.2 leading edge：要不要立即执行第一次`;
+
+let currentStep = 0;
+let gateCardId = null;
+
+function log(html, cls = "progress") {
+  document.getElementById("logHeader").style.display = "";
+  const el = document.createElement("div");
+  el.className = "log-item " + cls;
+  el.innerHTML = html;
+  el.id = "logitem-" + Date.now();
+  document.getElementById("logList").appendChild(el);
+  el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  return el.id;
+}
+
+function removeLog(id) {
+  const el = document.getElementById(id);
+  if (el) el.remove();
+}
+
+function addGateCard(title, content, onPass) {
+  document.getElementById("logHeader").style.display = "";
+  const id = "gate-" + Date.now();
+  const card = document.createElement("div");
+  card.className = "gate-card";
+  card.id = id;
+  card.innerHTML = `
+    <div class="gate-card-header">⊙ ${title}</div>
+    <div class="gate-card-content">${content}</div>
+    <div class="gate-input-row">
+      <input class="gate-input" id="${id}-inp" placeholder="直接回车通过，或输入修改意见…" />
+      <button class="btn-pass" onclick="passGate('${id}', false)">放弃 ✕</button>
+      <button class="btn-pass primary" onclick="passGate('${id}', true)">通过 ↵</button>
+    </div>`;
+  document.getElementById("logList").appendChild(card);
+  card.scrollIntoView({ behavior: "smooth", block: "start" });
+  setTimeout(() => document.getElementById(id + "-inp")?.focus(), 100);
+  gateCardId = id;
+  window._onPass = onPass;
+  return id;
+}
+
+function passGate(id, pass) {
+  const inp = document.getElementById(id + "-inp");
+  const reply = inp ? inp.value.trim() : "";
+  const card = document.getElementById(id);
+  if (card) card.remove();
+  gateCardId = null;
+  if (window._onPass) window._onPass(pass, reply);
+}
+
+function addDoneCard(url) {
+  document.getElementById("logHeader").style.display = "";
+  const el = document.createElement("div");
+  el.className = "done-card";
+  el.innerHTML = `
+    <div class="done-card-title">✅ 已写入飞书</div>
+    <a class="done-card-url" href="${url}" target="_blank">${url}</a>`;
+  document.getElementById("logList").appendChild(el);
+  el.scrollIntoView({ behavior: "smooth" });
+}
+
+function setRunning(id, label) {
+  const el = document.getElementById(id);
+  if (el) {
+    el.classList.add("running");
+    el.innerHTML = `<span class="icon spin">◌</span> ${label} <span style="color:#4a5568">运行中…</span>`;
+  }
+}
+
+function setDone(id, label) {
+  const el = document.getElementById(id);
+  if (el) {
+    el.classList.remove("running");
+    el.innerHTML = `<span class="icon" style="color:#48bb78">✓</span> ${label}`;
+  }
+}
+
+// ── 演示步骤机 ──
+
+let logIds = {};
+
+function startDemo() {
+  demoReset();
+  setTimeout(() => demoStep(1), 100);
+}
+
+function demoStep(n) {
+  if (n <= currentStep) return;
+
+  if (n === 1) {
+    currentStep = 1;
+    document.getElementById("btnRun").disabled = true;
+    logIds[0] = log(`<span class="icon" style="color:#4a5568">◌</span> 问题分析 <span style="color:#4a5568">运行中…</span>`);
+    setRunning(logIds[0], "问题分析");
+  }
+
+  if (n === 2 && currentStep >= 1) {
+    currentStep = 2;
+    setDone(logIds[0], "问题分析");
+    addGateCard("门1 · 确认范围 / 意图", GATE1_CONTENT, (pass) => {
+      if (pass) setTimeout(() => demoStep(3), 200);
+    });
+  }
+
+  if (n === 3 && currentStep >= 2) {
+    currentStep = 3;
+    if (gateCardId) { const c = document.getElementById(gateCardId); if (c) c.remove(); gateCardId = null; }
+    log(`<span class="icon" style="color:#68d391">✓</span> 门1 通过`);
+    logIds[1] = log(`<span class="icon">◌</span> 内容组织`);
+    setRunning(logIds[1], "内容组织");
+    setTimeout(() => {
+      setDone(logIds[1], "内容组织");
+      if (currentStep === 3) demoStep(4);
+    }, 900);
+  }
+
+  if (n === 4 && currentStep >= 3) {
+    currentStep = 4;
+    addGateCard("门2 · 确认骨架", GATE2_CONTENT, (pass) => {
+      if (pass) setTimeout(() => demoStep(5), 200);
+    });
+  }
+
+  if (n === 5 && currentStep >= 4) {
+    currentStep = 5;
+    if (gateCardId) { const c = document.getElementById(gateCardId); if (c) c.remove(); gateCardId = null; }
+    log(`<span class="icon" style="color:#68d391">✓</span> 门2 通过`);
+    logIds[2] = log(`<span class="icon">◌</span> 内容生成`);
+    setRunning(logIds[2], "内容生成（长文，约 20s）");
+    setTimeout(() => {
+      setDone(logIds[2], "内容生成");
+      logIds[3] = log(`<span class="icon">◌</span> 内容审核`);
+      setRunning(logIds[3], "内容审核");
+      setTimeout(() => {
+        setDone(logIds[3], "内容审核");
+        setTimeout(() => {
+          log(`<span class="icon" style="color:#68d391">✓</span> 正在写入飞书…`, "progress running");
+          setTimeout(() => {
+            document.getElementById("logList").lastChild?.remove();
+            addDoneCard("https://futu.feishu.cn/wiki/Qn8mwFZSeiZMYRkOiHqcSSNnnef");
+            document.getElementById("btnRun").disabled = false;
+          }, 800);
+        }, 300);
+      }, 600);
+    }, 1200);
+  }
+}
+
+// Enter 提交（Shift+Enter 换行）
+document.addEventListener("DOMContentLoaded", () => {
+  document.getElementById("topicInput").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      if (!document.getElementById("btnRun").disabled) startDemo();
+    }
+  });
+});
+
+function demoReset() {
+  currentStep = 0;
+  gateCardId = null;
+  window._onPass = null;
+  logIds = {};
+  document.getElementById("logList").innerHTML = "";
+  document.getElementById("logHeader").style.display = "none";
+  document.getElementById("btnRun").disabled = false;
+}
+
+function doRefresh() {
+  const btn = document.getElementById("btnRefresh");
+  btn.textContent = "↻ 刷新中…";
+  btn.classList.add("loading");
+  btn.disabled = true;
+  setTimeout(() => {
+    btn.textContent = "✓ 已更新";
+    setTimeout(() => {
+      btn.textContent = "↻ 刷新文件夹树";
+      btn.classList.remove("loading");
+      btn.disabled = false;
+    }, 1500);
+  }, 1200);
+}
+</script>
+
+<!-- 演示控制条 -->
+<div class="demo-bar">
+  <span>演示步骤：</span>
+  <button class="btn-demo" onclick="demoStep(1)">① 开始运行</button>
+  <button class="btn-demo" onclick="demoStep(2)">② 门1弹出</button>
+  <button class="btn-demo" onclick="demoStep(3)">③ 通过门1</button>
+  <button class="btn-demo" onclick="demoStep(4)">④ 门2弹出</button>
+  <button class="btn-demo" onclick="demoStep(5)">⑤ 完成</button>
+  <button class="btn-demo" onclick="demoReset()" style="margin-left:8px;color:#e53e3e;border-color:#4a1a1a">重置</button>
+</div>
+
+</body>
+</html>
