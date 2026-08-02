@@ -45,6 +45,19 @@ import { patchDiagrams, renderDiagrams } from "./diagrams.js";
 import { mergeIntoDoc } from "./merge.js";
 import { refreshFolderTree } from "./refreshFolderTree.js";
 import type { AgentInput, AgentRole, ResolvedAgentConfig } from "./types.js";
+import {
+  dbCreateRun,
+  dbSetDocUrl,
+  dbSetDocTitle,
+  dbSetStatus,
+  dbIncrTotals,
+  dbAddStep,
+  dbPushEvent,
+  dbGetEvents,
+  dbGetSteps,
+  dbListRuns,
+  dbDeleteRun,
+} from "./db.js";
 
 // ── SSE 事件类型（与 web/lib/types.ts 保持同步）─────────────────────────────
 
@@ -73,16 +86,20 @@ interface RunState {
 
 const runs = new Map<string, RunState>();
 
-function createRun(): string {
+function createRun(topic: string): string {
   const id = randomUUID();
+  const createdAt = Date.now();
   runs.set(id, { eventQueue: [], subscribers: new Set(), gateResolver: null });
+  dbCreateRun(id, topic, createdAt);
   return id;
 }
 
 function pushEvent(id: string, event: PipelineEvent): void {
   const run = runs.get(id);
   if (!run) return;
+  const seq = run.eventQueue.length;
   run.eventQueue.push(event);
+  dbPushEvent(id, seq, event);
   run.subscribers.forEach((fn) => fn(event));
 }
 
@@ -106,9 +123,6 @@ function buildDeps(runId: string) {
     apiKey: process.env.ANTHROPIC_API_KEY,
     baseURL: process.env.ANTHROPIC_BASE_URL || undefined,
   });
-  const client: ModelClient = {
-    createMessage: (params) => sdk.messages.stream(params as never).finalMessage() as never,
-  };
 
   const modelOverride  = process.env.MODEL_OVERRIDE;
   const effortOverride = process.env.EFFORT_OVERRIDE as ResolvedAgentConfig["effort"] | undefined;
@@ -116,15 +130,29 @@ function buildDeps(runId: string) {
   const dryRun         = process.env.LARK_DRY_RUN === "1";
 
   const runRole = async (role: AgentRole, input: AgentInput) => {
+    const startedAt = Date.now();
+    let inputTok = 0, outputTok = 0;
+    // 包装 SDK client 以捕获每次 API 调用的 token 用量
+    const wrappedClient: ModelClient = {
+      createMessage: async (params) => {
+        const msg = await (sdk.messages.stream(params as never).finalMessage() as any);
+        inputTok += (msg.usage?.input_tokens ?? 0);
+        outputTok += (msg.usage?.output_tokens ?? 0);
+        return msg;
+      },
+    };
     const base = resolveAgentConfig(config, role);
     const cfg: ResolvedAgentConfig = {
       ...base,
       model:  modelOverride  || base.model,
       effort: effortOverride || base.effort,
     };
-    pushEvent(runId, { type: "step_start", role, label: ROLE_LABEL[role] }); // 环节开始
-    const result = await runAgent(input, cfg, client);
-    pushEvent(runId, { type: "progress", role, label: ROLE_LABEL[role] });   // 环节完成
+    pushEvent(runId, { type: "step_start", role, label: ROLE_LABEL[role] });
+    const result = await runAgent(input, cfg, wrappedClient);
+    const durationMs = Date.now() - startedAt;
+    pushEvent(runId, { type: "progress", role, label: ROLE_LABEL[role] });
+    dbAddStep(runId, role, ROLE_LABEL[role], inputTok, outputTok, durationMs, startedAt);
+    dbIncrTotals(runId, inputTok + outputTok, durationMs);
     return result;
   };
 
@@ -197,6 +225,10 @@ function buildDeps(runId: string) {
 
     // 文字写入飞书后立刻通知前端（问题7）
     pushEvent(runId, { type: "doc_created", url, folderName });
+    dbSetDocUrl(runId, url, folderName);
+    // 异步提取文档标题（首行 H1）并持久化
+    const titleMatch = markdown.match(/^#\s+(.+)/m);
+    if (titleMatch) dbSetDocTitle(runId, titleMatch[1].trim());
 
     // 画图 fire-and-forget：不 await，让前端立即拿到链接（问题7）
     if (!noDiagram) {
@@ -231,22 +263,39 @@ app.use("*", cors());
 
 app.get("/health", (c) => c.json({ ok: true }));
 
+// 飞书文档 URL 模式（用于拖拽引用 outline 注入）
+const FEISHU_URL_RE = /https?:\/\/[a-z0-9-]+\.feishu\.cn\/\S+/i;
+
 // 启动流水线
 app.post("/api/run", async (c) => {
   const { topic } = await c.req.json<{ topic: string }>();
   if (!topic?.trim()) return c.json({ error: "topic required" }, 400);
 
-  const runId = createRun();
+  const rawTopic = topic.trim();
+  const runId = createRun(rawTopic);
   const deps = buildDeps(runId);
 
   // 后台异步跑，不 await
   (async () => {
     try {
-      const result = await runPipeline(topic.trim(), deps);
+      // 拖拽引用：若 topic 含飞书 URL，预取大纲作上下文
+      let userInput = rawTopic;
+      const urlMatch = rawTopic.match(FEISHU_URL_RE);
+      if (urlMatch) {
+        try {
+          const outline = await larkFetchOutline(urlMatch[0]);
+          if (outline.trim()) {
+            userInput = `## 引用文档大纲\n\n${outline}\n\n---\n\n${rawTopic}`;
+          }
+        } catch {
+          // 预取失败不阻断，直接用原始 topic
+        }
+      }
+
+      const result = await runPipeline(userInput, deps);
       if (result.kind === "split") {
-        // 逐篇跑子流水线
-        for (const topic of result.topics) {
-          const fixedPlacement = topic.placement;
+        for (const sub of result.topics) {
+          const fixedPlacement = sub.placement;
           const subDeps = {
             ...buildDeps(runId),
             publish: async (markdown: string) => {
@@ -260,16 +309,18 @@ app.post("/api/run", async (c) => {
               return url;
             },
           };
-          const sub = await runPipeline(topic.title, subDeps);
-          if (sub.kind === "single") {
+          const subResult = await runPipeline(sub.title, subDeps);
+          if (subResult.kind === "single") {
             pushEvent(runId, { type: "done", kind: "split" });
           }
         }
       } else {
         pushEvent(runId, { type: "done", kind: "single" });
       }
+      dbSetStatus(runId, "done");
     } catch (e) {
       pushEvent(runId, { type: "error", message: (e as Error).message });
+      dbSetStatus(runId, "error");
     }
   })();
 
@@ -321,6 +372,25 @@ app.post("/api/run/:id/gate", async (c) => {
   run.gateResolver = null;
   resolver(reply ?? "");
   pushEvent(runId, { type: "gate_closed" });
+  return c.json({ ok: true });
+});
+
+// 历史运行列表（?q= 可关键词搜索）
+app.get("/api/history", (c) => {
+  const q = c.req.query("q") ?? undefined;
+  return c.json(dbListRuns({ q }));
+});
+
+// 历史运行详情：事件列表 + 步骤统计
+app.get("/api/history/:id", (c) => {
+  const id = c.req.param("id");
+  return c.json({ events: dbGetEvents(id), steps: dbGetSteps(id) });
+});
+
+// 删除历史运行（级联删除事件和步骤）
+app.delete("/api/history/:id", (c) => {
+  const id = c.req.param("id");
+  dbDeleteRun(id);
   return c.json({ ok: true });
 });
 
