@@ -5,7 +5,7 @@
     "contentOrganization": { "effort": "high" },
     "contentGeneration":   { "effort": "high", "maxTokens": 32000 },
     "contentReview":       { "model": "claude-haiku-4-5-20251001", "effort": "low" },
-    "diagramSvg":          { "effort": "high", "maxTokens": 32000 },
+    "diagramSvg":          { "effort": "medium", "maxTokens": 8000, "thinking": "disabled" },
     "incrementalMerge":    { "effort": "high", "maxTokens": 32000 },
     "distiller":           { "model": "claude-haiku-4-5-20251001", "effort": "low" }
   }
