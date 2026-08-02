@@ -27,16 +27,17 @@ export type RefreshResult =
  * JSON 解析失败或 ok=false 时直接抛错，由上层 buildTree 捕获并决定是否降级。
  */
 async function listChildren(folderToken: string): Promise<FolderNode[]> {
-  const args = ["drive", "files", "list", "--folder-token", folderToken, "--type", "folder", "--as", "user"];
+  // lark-cli drive files list 没有 --type 过滤参数，在代码里按 type===folder 筛选
+  const args = ["drive", "files", "list", "--folder-token", folderToken, "--as", "user"];
   const stdout = await defaultRunner("lark-cli", args);
   const parsed = JSON.parse(stdout) as {
     ok?: boolean;
-    data?: { files?: Array<{ name?: string; token?: string }> };
+    data?: { files?: Array<{ name?: string; token?: string; type?: string }> };
     error?: { message?: string };
   };
   if (!parsed.ok) throw new Error(parsed.error?.message ?? "unknown");
   return (parsed.data?.files ?? [])
-    .filter((f) => f.name && f.token)
+    .filter((f) => f.name && f.token && f.type === "folder")
     .map((f) => ({ name: f.name!, token: f.token!, children: [] }));
 }
 
