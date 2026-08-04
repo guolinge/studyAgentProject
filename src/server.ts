@@ -20,12 +20,17 @@
  */
 
 import "dotenv/config";
+import { writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
 import { Hono } from "hono";
 import { serve } from "@hono/node-server";
 import { cors } from "hono/cors";
 import { randomUUID } from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
-import { loadConfig, resolveAgentConfig } from "./config.js";
+import { loadConfig, resolveAgentConfig, ConfigSchema } from "./config.js";
+import { loadSettings, saveSettings } from "./settingsStore.js";
+import type { AppSettings } from "./settingsStore.js";
 import { loadPrompt } from "./prompts.js";
 import { runAgent, type ModelClient } from "./agentRunner.js";
 import {
@@ -59,6 +64,17 @@ import {
   dbListRuns,
   dbDeleteRun,
 } from "./db.js";
+
+// ── 配置文件路径 ───────────────────────────────────────────────────────────────
+
+const SETTINGS_PATH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../settings.json",
+);
+const AGENTS_CONFIG_PATH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../agents.config.json",
+);
 
 // ── SSE 事件类型（与 web/lib/types.ts 保持同步）─────────────────────────────
 
@@ -120,11 +136,14 @@ const ROLE_LABEL: Record<AgentRole, string> = {
 // ── 装配流水线依赖 ────────────────────────────────────────────────────────────
 
 function buildDeps(runId: string) {
-  const config = loadConfig();
-  const sdk = new Anthropic({
-    apiKey: process.env.ANTHROPIC_API_KEY,
-    baseURL: process.env.ANTHROPIC_BASE_URL || undefined,
-  });
+  const config      = loadConfig();
+  const appSettings = loadSettings(SETTINGS_PATH);
+
+  // settings.json takes priority over env vars
+  const apiKey  = appSettings.anthropicApiKey  || process.env.ANTHROPIC_API_KEY  || "";
+  const baseURL = appSettings.anthropicBaseUrl || process.env.ANTHROPIC_BASE_URL || undefined;
+
+  const sdk = new Anthropic({ apiKey, baseURL: baseURL || undefined });
 
   const modelOverride  = process.env.MODEL_OVERRIDE;
   const effortOverride = process.env.EFFORT_OVERRIDE as ResolvedAgentConfig["effort"] | undefined;
@@ -166,17 +185,16 @@ function buildDeps(runId: string) {
     return result;
   };
 
-  const base = process.env.ANTHROPIC_BASE_URL || "";
   const search =
-    process.env.NO_SEARCH === "1" || !base
+    process.env.NO_SEARCH === "1" || !baseURL
       ? undefined
       : async (query: string) => {
-          const r = await tavilySearch(query, { base, apiKey: process.env.ANTHROPIC_API_KEY ?? "" });
+          const r = await tavilySearch(query, { base: baseURL, apiKey });
           return formatSearchContext(r);
         };
 
   const dedup =
-    process.env.NO_DEDUP === "1" || !base
+    process.env.NO_DEDUP === "1" || !baseURL
       ? undefined
       : {
           search: (kw: string) => larkSearchDocs(kw, { mine: true, onlyTitle: true }),
@@ -198,7 +216,7 @@ function buildDeps(runId: string) {
           },
         };
 
-  const indexDocToken = process.env.INDEX_DOC_TOKEN;
+  const indexDocToken = appSettings.feishuIndexDocToken || process.env.INDEX_DOC_TOKEN;
   const updateIndex =
     dryRun || !indexDocToken
       ? undefined
@@ -209,6 +227,8 @@ function buildDeps(runId: string) {
         };
 
   const gate = async (title: string, content: string): Promise<string> => {
+    // When gate1Enabled=false, gate 1 auto-passes
+    if (!appSettings.gate1Enabled && title.startsWith("门1")) return "";
     return new Promise((resolve) => {
       const run = runs.get(runId);
       if (!run) { resolve(""); return; }
@@ -287,7 +307,7 @@ function buildDeps(runId: string) {
     return { url: docUrl, patched: result.patched, total: result.total };
   };
 
-  return { loadPrompt, runRole, gate, publish, search, dedup, updateIndex, onReviewFeedback, patchDocDiagrams };
+  return { loadPrompt, runRole, gate, publish, search, dedup, updateIndex, onReviewFeedback, patchDocDiagrams, reviewMaxRetries: appSettings.maxReviewRetries };
 }
 
 // ── Hono 应用 ─────────────────────────────────────────────────────────────────
@@ -295,6 +315,38 @@ function buildDeps(runId: string) {
 const app = new Hono();
 
 app.use("*", cors());
+
+app.get("/api/settings", (c) => {
+  const appSettings = loadSettings(SETTINGS_PATH);
+  const agentConfig = loadConfig();
+  const masked: AppSettings = {
+    ...appSettings,
+    anthropicApiKey: appSettings.anthropicApiKey
+      ? "••••" + appSettings.anthropicApiKey.slice(-4)
+      : "",
+  };
+  return c.json({ app: masked, agents: agentConfig });
+});
+
+app.put("/api/settings", async (c) => {
+  const body = await c.req.json<{ app?: Record<string, unknown>; agents?: unknown }>();
+
+  if (body.app) {
+    const patch = { ...(body.app as Partial<AppSettings>) };
+    // Don't overwrite real key if frontend sends back masked placeholder
+    if (typeof patch.anthropicApiKey === "string" && patch.anthropicApiKey.startsWith("••••")) {
+      delete patch.anthropicApiKey;
+    }
+    saveSettings(patch, SETTINGS_PATH);
+  }
+
+  if (body.agents) {
+    const cfg = ConfigSchema.parse(body.agents);
+    writeFileSync(AGENTS_CONFIG_PATH, JSON.stringify(cfg, null, 2) + "\n", "utf8");
+  }
+
+  return c.json({ ok: true });
+});
 
 app.get("/health", (c) => c.json({ ok: true }));
 
