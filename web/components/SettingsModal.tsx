@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { getSettings, saveSettings } from "@/lib/settingsApi";
 import type {
   AppSettings, AgentConfig, AgentDefaults, AgentOverride,
@@ -59,7 +59,10 @@ function AgentRow({
         {EFFORT_OPTIONS.map((v) => <option key={v} value={v}>{v}</option>)}
       </select>
       <input type="number" value={maxTokens || ""} min={1}
-        onChange={(e) => onMaxTokens(Number(e.target.value))}
+        onChange={(e) => {
+          const v = Number(e.target.value);
+          if (!isNaN(v) && v > 0) onMaxTokens(v);
+        }}
         placeholder={required ? "必填" : "同默"} className={cell} />
       <select value={thinking} onChange={(e) => onThinking(e.target.value)} className={cell}>
         {!required && <option value="">同默认</option>}
@@ -84,10 +87,32 @@ export default function SettingsModal({
   const [error,   setError]   = useState<string | null>(null);
   const [saved,   setSaved]   = useState(false);
 
+  // Fix 1: ref to track the "saved" auto-clear timer
+  const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Fix 1: cleanup timer on unmount
   useEffect(() => {
+    return () => {
+      if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
+    };
+  }, []);
+
+  // Fix 4: AbortController to guard setState after unmount
+  useEffect(() => {
+    const ac = new AbortController();
     getSettings()
-      .then(({ app: a, agents: ag }) => { setApp(a); setAgents(ag); setLoading(false); })
-      .catch((e) => { setError((e as Error).message); setLoading(false); });
+      .then(({ app: a, agents: ag }) => {
+        if (ac.signal.aborted) return;
+        setApp(a);
+        setAgents(ag);
+        setLoading(false);
+      })
+      .catch((e) => {
+        if (ac.signal.aborted) return;
+        setError((e as Error).message);
+        setLoading(false);
+      });
+    return () => ac.abort();
   }, []);
 
   const handleSave = useCallback(async () => {
@@ -97,7 +122,8 @@ export default function SettingsModal({
       await saveSettings({ app, agents });
       onThemeChange(app.theme);
       setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
+      // Fix 1: track timer ID so it can be cleared on unmount
+      savedTimerRef.current = setTimeout(() => setSaved(false), 2000);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -105,13 +131,21 @@ export default function SettingsModal({
     }
   }, [app, agents, onThemeChange]);
 
-  const patchApp = (patch: Partial<AppSettings>) =>
+  // Fix 7: patchApp resets "saved" indicator on any user edit
+  const patchApp = (patch: Partial<AppSettings>) => {
+    setSaved(false);
     setApp((prev) => prev ? { ...prev, ...patch } : prev);
+  };
 
-  const patchDefaults = (patch: Partial<AgentDefaults>) =>
+  // Fix 7: patchDefaults resets "saved" indicator on any user edit
+  const patchDefaults = (patch: Partial<AgentDefaults>) => {
+    setSaved(false);
     setAgents((prev) => prev ? { ...prev, defaults: { ...prev.defaults, ...patch } } : prev);
+  };
 
-  const patchOverride = (role: string, patch: Partial<AgentOverride>) =>
+  // Fix 7: patchOverride resets "saved" indicator on any user edit
+  const patchOverride = (role: string, patch: Partial<AgentOverride>) => {
+    setSaved(false);
     setAgents((prev) => {
       if (!prev) return prev;
       const ovs = { ...prev.agents, [role]: { ...(prev.agents[role] ?? {}), ...patch } };
@@ -124,6 +158,7 @@ export default function SettingsModal({
       if (ov.thinking)  cleaned.thinking  = ov.thinking;
       return { ...prev, agents: { ...ovs, [role]: cleaned } };
     });
+  };
 
   return (
     <div
@@ -137,13 +172,16 @@ export default function SettingsModal({
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
           <h2 className="text-base font-semibold text-gray-800">⚙ 设置</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none px-1">×</button>
+          {/* Fix 3 + Fix 6: type="button" + aria-label */}
+          <button type="button" aria-label="关闭" onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none px-1">×</button>
         </div>
 
         {/* Tabs */}
         <div className="flex border-b border-gray-200 px-6 gap-6">
           {TAB_LABELS.map(({ id, label }) => (
+            // Fix 3: type="button"
             <button
+              type="button"
               key={id}
               onClick={() => setTab(id)}
               className={`py-3 text-sm font-medium border-b-2 -mb-px transition-colors ${
@@ -192,7 +230,8 @@ export default function SettingsModal({
                         return (
                           <AgentRow
                             key={role}
-                            label={AGENT_ROLE_LABELS[role]}
+                            // Fix 5: fallback to raw role key if label is missing
+                            label={AGENT_ROLE_LABELS[role] ?? role}
                             model={ov.model ?? ""} effort={ov.effort ?? ""}
                             maxTokens={ov.maxTokens ?? 0} thinking={ov.thinking ?? ""}
                             required={false}
@@ -248,7 +287,9 @@ export default function SettingsModal({
                     <label className="block text-sm font-medium text-gray-700 mb-2">主题色</label>
                     <div className="flex gap-3">
                       {THEME_OPTIONS.map(({ value, label, rgb }) => (
+                        // Fix 3: type="button"
                         <button
+                          type="button"
                           key={value}
                           onClick={() => patchApp({ theme: value })}
                           className={`flex flex-col items-center gap-1.5 p-2 rounded-xl border-2 transition-all ${
@@ -270,7 +311,11 @@ export default function SettingsModal({
                       <p className="text-sm font-medium text-gray-700">启用门1（范围 / 意图确认）</p>
                       <p className="text-xs text-gray-400 mt-0.5">关闭后门1自动通过，适合明确的简短问题</p>
                     </div>
+                    {/* Fix 3 + Fix 6: type="button" + aria-label + aria-pressed */}
                     <button
+                      type="button"
+                      aria-label="门1 开关"
+                      aria-pressed={app.gate1Enabled}
                       onClick={() => patchApp({ gate1Enabled: !app.gate1Enabled })}
                       className={`relative w-11 h-6 rounded-full transition-colors focus:outline-none ${
                         app.gate1Enabled ? "bg-[rgb(var(--accent-500))]" : "bg-gray-300"
@@ -301,7 +346,9 @@ export default function SettingsModal({
         {/* Footer */}
         <div className="flex items-center justify-between px-6 py-4 border-t border-gray-100">
           <span className="text-xs text-gray-400">设置保存到本地 settings.json（不入 git）</span>
+          {/* Fix 3: type="button" */}
           <button
+            type="button"
             onClick={handleSave}
             disabled={saving || loading}
             className="px-5 py-2 rounded-lg bg-[rgb(var(--accent-500))] hover:brightness-110 disabled:bg-gray-200 disabled:text-gray-400 text-white text-sm font-semibold transition-all"
