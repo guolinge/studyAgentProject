@@ -88,7 +88,7 @@ export default function HistoryPanel({
       <div className="px-3 pt-4 pb-2">
         <button
           onClick={onNewConversation}
-          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 hover:border-indigo-300 hover:bg-indigo-50 text-sm text-gray-600 hover:text-indigo-600 transition-colors"
+          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 hover:border-[rgb(var(--accent-400)/0.3)] hover:bg-[rgb(var(--accent-50)/0.5)] text-sm text-gray-600 hover:text-[rgb(var(--accent-500))] transition-colors"
         >
           <span className="text-base leading-none">＋</span>
           <span>新建对话</span>
@@ -101,7 +101,7 @@ export default function HistoryPanel({
           value={query}
           onChange={(e) => handleQueryChange(e.target.value)}
           placeholder="搜索历史…"
-          className="w-full text-xs bg-gray-50 border border-gray-200 focus:border-indigo-300 focus:ring-1 focus:ring-indigo-100 rounded-md px-2.5 py-1.5 outline-none placeholder-gray-400"
+          className="w-full text-xs bg-gray-50 border border-gray-200 focus:border-[rgb(var(--accent-400))] focus:ring-1 focus:ring-[rgb(var(--accent-400)/0.3)] rounded-md px-2.5 py-1.5 outline-none placeholder-gray-400"
         />
       </div>
 
@@ -123,7 +123,7 @@ export default function HistoryPanel({
               onClick={() => onSelectRun(item)}
               className={`relative group flex items-start gap-2 px-2.5 py-2 rounded-lg cursor-pointer transition-colors select-none ${
                 isView
-                  ? "bg-indigo-50 border border-indigo-200"
+                  ? "bg-[rgb(var(--accent-50)/0.5)] border border-[rgb(var(--accent-400)/0.3)]"
                   : "hover:bg-gray-50"
               }`}
             >

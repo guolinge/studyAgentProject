@@ -14,12 +14,14 @@
  *   历史刷新  historyTick（新 run 完成后递增，触发 HistoryPanel 重拉）
  */
 
-import { useReducer, useRef, useCallback, useState } from "react";
+import { useReducer, useRef, useCallback, useState, useEffect } from "react";
 import HistoryPanel from "@/components/HistoryPanel";
 import StepsSidebar from "@/components/StepsSidebar";
 import GateViewer from "@/components/GateViewer";
 import StreamingCard from "@/components/StreamingCard";
+import SettingsModal from "@/components/SettingsModal";
 import { startRun, openEventStream, submitGate, refreshFolderTree, getRunDetail } from "@/lib/api";
+import { getSettings } from "@/lib/settingsApi";
 import type { PipelineEvent, GateEvent, HistoryItem, StepStat } from "@/lib/types";
 
 type Status = "idle" | "running" | "done" | "error";
@@ -162,8 +164,19 @@ export default function Home() {
   const [state, dispatch] = useReducer(reducer, INIT);
   // 流式输出临时状态（不入 events 数组，不持久化）
   const [streamingDelta, setStreamingDelta] = useState<{ label: string; text: string } | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const closeSSERef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    getSettings()
+      .then(({ app }) => {
+        if (app.theme) {
+          document.documentElement.setAttribute("data-theme", app.theme);
+        }
+      })
+      .catch(() => {/* ignore – defaults apply */});
+  }, []);
 
   const handleSubmit = useCallback(async () => {
     const topic = textareaRef.current?.value.trim() ?? "";
@@ -283,11 +296,18 @@ export default function Home() {
     <div className="h-screen flex flex-col overflow-hidden bg-gray-50 text-gray-900">
       {/* 顶栏 */}
       <header className="flex-shrink-0 flex items-center justify-between px-4 py-2.5 border-b border-gray-200 bg-white z-10 shadow-sm">
-        <span className="text-indigo-600 font-semibold tracking-wide text-sm">✦ StudyAgent</span>
+        <span className="text-[rgb(var(--accent-500))] font-semibold tracking-wide text-sm">✦ StudyAgent</span>
         <div className="flex items-center gap-3">
           {state.refreshMsg && (
             <span className="text-xs text-gray-500">{state.refreshMsg}</span>
           )}
+          <button
+            type="button"
+            onClick={() => setShowSettings(true)}
+            className="text-xs text-gray-500 hover:text-gray-700 border border-gray-300 hover:border-gray-400 px-3 py-1.5 rounded-md transition-colors bg-white"
+          >
+            ⚙ 设置
+          </button>
           <button
             onClick={handleRefresh}
             className="text-xs text-gray-500 hover:text-gray-700 border border-gray-300 hover:border-gray-400 px-3 py-1.5 rounded-md transition-colors bg-white"
@@ -332,7 +352,7 @@ export default function Home() {
               rows={5}
               disabled={isRunning}
               placeholder={"支持三种输入方式：\n\n① 短问题：pnpm 的原理是什么\n\n② 问题 + AI 回答（整理/拓展）\n\n③ 链接（微信公众号、网页等）"}
-              className="w-full bg-white border border-gray-300 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 rounded-xl text-sm text-gray-800 placeholder-gray-400 px-4 py-3.5 outline-none resize-y leading-relaxed min-h-[120px] transition-all disabled:bg-gray-50 disabled:text-gray-400 shadow-sm"
+              className="w-full bg-white border border-gray-300 focus:border-[rgb(var(--accent-400))] focus:ring-2 focus:ring-[rgb(var(--accent-50)/0.4)] rounded-xl text-sm text-gray-800 placeholder-gray-400 px-4 py-3.5 outline-none resize-y leading-relaxed min-h-[120px] transition-all disabled:bg-gray-50 disabled:text-gray-400 shadow-sm"
               onDragOver={(e) => e.preventDefault()}
               onDrop={handleDrop}
               onKeyDown={(e) => {
@@ -360,7 +380,7 @@ export default function Home() {
                   <button
                     onClick={handleSubmit}
                     disabled={isRunning}
-                    className="px-5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:bg-gray-200 disabled:text-gray-400 text-white text-sm font-semibold transition-colors shadow-sm"
+                    className="px-5 py-2 rounded-lg bg-[rgb(var(--accent-500))] hover:bg-[rgb(var(--accent-400))] disabled:bg-gray-200 disabled:text-gray-400 text-white text-sm font-semibold transition-colors shadow-sm"
                   >
                     {isRunning ? (
                       <span className="flex items-center gap-2">
@@ -388,7 +408,7 @@ export default function Home() {
                       href={activeDocUrl}
                       target="_blank"
                       rel="noreferrer"
-                      className="text-indigo-600 text-sm hover:underline break-all leading-snug"
+                      className="text-[rgb(var(--accent-500))] text-sm hover:underline break-all leading-snug"
                     >
                       {activeDocUrl}
                     </a>
@@ -467,6 +487,12 @@ export default function Home() {
           readOnly={isViewMode}
         />
       </div>
+      {showSettings && (
+        <SettingsModal
+          onClose={() => setShowSettings(false)}
+          onThemeChange={(theme) => document.documentElement.setAttribute("data-theme", theme)}
+        />
+      )}
     </div>
   );
 }
