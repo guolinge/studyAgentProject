@@ -1,15 +1,150 @@
 "use client";
 
-/**
- * GateViewer — 中间列的门内容展示区
- *
- * - readOnly=false（active gate）：显示回复输入框，Enter 提交
- * - readOnly=true（历史查看 / 点击右栏过去的门）：仅展示内容
- * - event=null：返回 null（不渲染）
- */
-
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { GateEvent } from "@/lib/types";
+
+// 把行内 **bold** / `code` 转成 JSX span
+function renderInline(text: string, key: string | number) {
+  const parts: React.ReactNode[] = [];
+  let rest = text;
+  let idx = 0;
+  while (rest.length > 0) {
+    const bold = rest.match(/\*\*(.+?)\*\*/);
+    const code = rest.match(/`([^`]+)`/);
+    const first = [bold, code]
+      .filter(Boolean)
+      .sort((a, b) => (a!.index ?? 0) - (b!.index ?? 0))[0];
+    if (!first) { parts.push(<span key={`${key}-${idx}`}>{rest}</span>); break; }
+    if (first.index! > 0) parts.push(<span key={`${key}-${idx++}`}>{rest.slice(0, first.index)}</span>);
+    if (first === bold)
+      parts.push(<strong key={`${key}-${idx++}`} className="font-semibold text-gray-900">{first[1]}</strong>);
+    else
+      parts.push(<code key={`${key}-${idx++}`} className="bg-gray-100 text-gray-800 px-1 py-0.5 rounded text-xs font-mono">{first[1]}</code>);
+    rest = rest.slice(first.index! + first[0].length);
+  }
+  return parts;
+}
+
+function renderMarkdown(text: string) {
+  const lines = text.split("\n");
+  const nodes: React.ReactNode[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    const h1 = line.match(/^# (.+)/);
+    const h2 = line.match(/^## (.+)/);
+    const h3 = line.match(/^### (.+)/);
+    const li = line.match(/^[-*]\s(.+)/);
+    const hr = /^---+$/.test(line.trim());
+    if (h1)      nodes.push(<h1 key={i} className="text-base font-bold text-gray-900 mt-4 mb-1.5 first:mt-0 border-b border-gray-100 pb-1">{renderInline(h1[1], i)}</h1>);
+    else if (h2) nodes.push(<h2 key={i} className="text-sm font-semibold text-gray-800 mt-3 mb-1">{renderInline(h2[1], i)}</h2>);
+    else if (h3) nodes.push(<h3 key={i} className="text-sm font-medium text-gray-700 mt-2 mb-0.5">{renderInline(h3[1], i)}</h3>);
+    else if (li) nodes.push(
+      <div key={i} className="flex items-start gap-1.5 text-sm text-gray-700 leading-relaxed ml-2">
+        <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-gray-400 flex-shrink-0" />
+        <span>{renderInline(li[1], i)}</span>
+      </div>
+    );
+    else if (hr) nodes.push(<hr key={i} className="border-gray-200 my-2" />);
+    else if (!line.trim()) nodes.push(<div key={i} className="h-2" />);
+    else nodes.push(<p key={i} className="text-sm text-gray-700 leading-relaxed">{renderInline(line, i)}</p>);
+    i++;
+  }
+  return nodes;
+}
+
+// 全屏弹窗（挂载到 body 避免层叠上下文问题）
+function FullscreenModal({
+  event,
+  onClose,
+  onSubmit,
+  readOnly,
+}: {
+  event: GateEvent;
+  onClose: () => void;
+  onSubmit?: (reply: string) => void;
+  readOnly: boolean;
+}) {
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const [inputVal, setInputVal] = useState("");
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKey);
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = "";
+    };
+  }, [onClose]);
+
+  const submit = () => {
+    const val = inputRef.current?.value.trim() ?? "";
+    onSubmit?.(val);
+    onClose();
+  };
+  const hasInput = inputVal.trim() !== "";
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-6"
+      onClick={onClose}
+    >
+      {/* 遮罩 */}
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+
+      {/* 弹窗主体 */}
+      <div
+        className="relative z-10 w-full max-w-3xl max-h-[90vh] flex flex-col bg-white rounded-2xl shadow-2xl overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* 头部 */}
+        <div className="flex items-center gap-2 px-6 py-3 bg-indigo-50 border-b border-indigo-100 flex-shrink-0">
+          <span className="text-indigo-600 text-sm font-semibold">⊙ {event.title}</span>
+          {readOnly && <span className="text-[10px] text-indigo-300 ml-1">只读</span>}
+          <button
+            onClick={onClose}
+            className="ml-auto text-gray-400 hover:text-gray-600 transition-colors text-lg leading-none px-1"
+            title="关闭 (Esc)"
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* 内容区 */}
+        <div className="flex-1 overflow-y-auto px-6 py-5 text-gray-800 space-y-0.5 bg-white">
+          {renderMarkdown(event.content)}
+        </div>
+
+        {/* 底部输入（非只读时显示） */}
+        {!readOnly && (
+          <div className="flex gap-3 px-6 py-4 bg-gray-50 border-t border-gray-100 flex-shrink-0">
+            <textarea
+              ref={inputRef}
+              rows={2}
+              placeholder="直接点击通过，或输入修改意见…"
+              className="flex-1 bg-white border border-gray-300 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 rounded-lg text-sm text-gray-800 placeholder-gray-400 px-3 py-2 outline-none resize-none transition-all"
+              onChange={(e) => setInputVal(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
+              }}
+            />
+            <button
+              onClick={submit}
+              className={`px-5 py-2 rounded-lg text-white text-sm font-semibold whitespace-nowrap transition-colors shadow-sm self-end ${
+                hasInput ? "bg-amber-500 hover:bg-amber-400" : "bg-indigo-600 hover:bg-indigo-500"
+              }`}
+            >
+              {hasInput ? "提交意见 →" : "通过 ↵"}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>,
+    document.body,
+  );
+}
 
 interface Props {
   event: GateEvent | null;
@@ -20,6 +155,7 @@ interface Props {
 export default function GateViewer({ event, onSubmit, readOnly = false }: Props) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const [inputVal, setInputVal] = useState("");
+  const [expanded, setExpanded] = useState(false);
 
   useEffect(() => {
     if (!readOnly) inputRef.current?.focus();
@@ -37,41 +173,66 @@ export default function GateViewer({ event, onSubmit, readOnly = false }: Props)
   const hasInput = inputVal.trim() !== "";
 
   return (
-    <div className="w-full border border-indigo-200 rounded-xl overflow-hidden shadow-sm">
-      <div className="flex items-center gap-2 px-4 py-2 bg-indigo-50 border-b border-indigo-100">
-        <span className="text-indigo-600 text-xs font-semibold">⊙ {event.title}</span>
-        {readOnly && (
-          <span className="ml-auto text-[10px] text-indigo-300">只读</span>
+    <>
+      <div className="w-full border border-indigo-200 rounded-xl overflow-hidden shadow-sm">
+        {/* 头部 */}
+        <div className="flex items-center gap-2 px-4 py-2 bg-indigo-50 border-b border-indigo-100">
+          <span className="text-indigo-600 text-xs font-semibold">⊙ {event.title}</span>
+          <div className="ml-auto flex items-center gap-2">
+            {readOnly && <span className="text-[10px] text-indigo-300">只读</span>}
+            <button
+              onClick={() => setExpanded(true)}
+              title="全屏查看"
+              className="text-indigo-300 hover:text-indigo-500 transition-colors leading-none"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                <path d="M3 4a1 1 0 011-1h4a1 1 0 010 2H5.414l3.293 3.293a1 1 0 01-1.414 1.414L4 6.414V8a1 1 0 01-2 0V4z" />
+                <path d="M17 4a1 1 0 00-1-1h-4a1 1 0 000 2h2.586l-3.293 3.293a1 1 0 001.414 1.414L16 6.414V8a1 1 0 002 0V4z" />
+                <path d="M3 16a1 1 0 001 1h4a1 1 0 000-2H5.414l3.293-3.293a1 1 0 00-1.414-1.414L4 13.586V12a1 1 0 00-2 0v4z" />
+                <path d="M17 16a1 1 0 01-1 1h-4a1 1 0 010-2h2.586l-3.293-3.293a1 1 0 011.414-1.414L16 13.586V12a1 1 0 012 0v4z" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        {/* 内容区 */}
+        <div className="px-4 py-4 min-h-48 max-h-[36rem] overflow-y-auto bg-white text-gray-800 space-y-0.5">
+          {renderMarkdown(event.content)}
+        </div>
+
+        {/* 底部输入 */}
+        {!readOnly && (
+          <div className="flex gap-2 px-4 py-3 bg-gray-50 border-t border-gray-100">
+            <textarea
+              ref={inputRef}
+              rows={1}
+              placeholder="直接回车通过，或输入修改意见…"
+              className="flex-1 bg-white border border-gray-300 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 rounded-lg text-sm text-gray-800 placeholder-gray-400 px-3 py-2 outline-none resize-none transition-all"
+              onChange={(e) => setInputVal(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
+              }}
+            />
+            <button
+              onClick={submit}
+              className={`px-4 py-2 rounded-lg text-white text-sm font-semibold whitespace-nowrap transition-colors shadow-sm ${
+                hasInput ? "bg-amber-500 hover:bg-amber-400" : "bg-indigo-600 hover:bg-indigo-500"
+              }`}
+            >
+              {hasInput ? "提交意见 →" : "通过 ↵"}
+            </button>
+          </div>
         )}
       </div>
-      <pre className="px-4 py-3 text-sm text-gray-700 whitespace-pre-wrap leading-relaxed max-h-72 overflow-y-auto font-sans bg-white">
-        {event.content}
-      </pre>
-      {!readOnly && (
-        <div className="flex gap-2 px-4 py-3 bg-gray-50 border-t border-gray-100">
-          <textarea
-            ref={inputRef}
-            rows={1}
-            placeholder="直接回车通过，或输入修改意见…"
-            className="flex-1 bg-white border border-gray-300 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 rounded-lg text-sm text-gray-800 placeholder-gray-400 px-3 py-2 outline-none resize-none transition-all"
-            onChange={(e) => setInputVal(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                submit();
-              }
-            }}
-          />
-          <button
-            onClick={submit}
-            className={`px-4 py-2 rounded-lg text-white text-sm font-semibold whitespace-nowrap transition-colors shadow-sm ${
-              hasInput ? "bg-amber-500 hover:bg-amber-400" : "bg-indigo-600 hover:bg-indigo-500"
-            }`}
-          >
-            {hasInput ? "提交意见 →" : "通过 ↵"}
-          </button>
-        </div>
+
+      {expanded && (
+        <FullscreenModal
+          event={event}
+          onClose={() => setExpanded(false)}
+          onSubmit={readOnly ? undefined : (reply) => { onSubmit?.(reply); setExpanded(false); }}
+          readOnly={readOnly}
+        />
       )}
-    </div>
+    </>
   );
 }
