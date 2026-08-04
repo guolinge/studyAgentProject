@@ -318,7 +318,7 @@ app.use("*", cors());
 
 app.get("/api/settings", (c) => {
   const appSettings = loadSettings(SETTINGS_PATH);
-  const agentConfig = loadConfig();
+  const agentConfig = loadConfig(AGENTS_CONFIG_PATH);
   const masked: AppSettings = {
     ...appSettings,
     anthropicApiKey: appSettings.anthropicApiKey
@@ -329,20 +329,28 @@ app.get("/api/settings", (c) => {
 });
 
 app.put("/api/settings", async (c) => {
-  const body = await c.req.json<{ app?: Record<string, unknown>; agents?: unknown }>();
-
-  if (body.app) {
-    const patch = { ...(body.app as Partial<AppSettings>) };
-    // Don't overwrite real key if frontend sends back masked placeholder
-    if (typeof patch.anthropicApiKey === "string" && patch.anthropicApiKey.startsWith("••••")) {
-      delete patch.anthropicApiKey;
-    }
-    saveSettings(patch, SETTINGS_PATH);
+  let body: { app?: Record<string, unknown>; agents?: unknown };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON" }, 400);
   }
 
-  if (body.agents) {
-    const cfg = ConfigSchema.parse(body.agents);
-    writeFileSync(AGENTS_CONFIG_PATH, JSON.stringify(cfg, null, 2) + "\n", "utf8");
+  try {
+    if (body.app) {
+      const patch = { ...(body.app as Partial<AppSettings>) };
+      if (typeof patch.anthropicApiKey === "string" && patch.anthropicApiKey.startsWith("••••")) {
+        delete patch.anthropicApiKey;
+      }
+      saveSettings(patch, SETTINGS_PATH);
+    }
+
+    if (body.agents) {
+      const cfg = ConfigSchema.parse(body.agents);
+      writeFileSync(AGENTS_CONFIG_PATH, JSON.stringify(cfg, null, 2) + "\n", "utf8");
+    }
+  } catch (e) {
+    return c.json({ error: (e as Error).message }, 400);
   }
 
   return c.json({ ok: true });
