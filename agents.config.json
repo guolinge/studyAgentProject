@@ -1,12 +1,38 @@
 {
-  "defaults": { "model": "claude-sonnet-4-6", "effort": "high", "maxTokens": 16000, "thinking": "adaptive" },
+  "defaults": {
+    "model": "claude-sonnet-4-6",
+    "effort": "high",
+    "maxTokens": 16000,
+    "thinking": "adaptive"
+  },
   "agents": {
-    "questionAnalysis":    { "model": "claude-haiku-4-5-20251001", "effort": "low" },
-    "contentOrganization": { "effort": "high" },
-    "contentGeneration":   { "effort": "high", "maxTokens": 32000 },
-    "contentReview":       { "model": "claude-haiku-4-5-20251001", "effort": "low" },
-    "diagramSvg":          { "effort": "medium", "maxTokens": 8000, "thinking": "disabled" },
-    "incrementalMerge":    { "effort": "high", "maxTokens": 32000 },
-    "distiller":           { "model": "claude-haiku-4-5-20251001", "effort": "low" }
+    "questionAnalysis": {
+      "model": "claude-haiku-4-5-20251001",
+      "effort": "low"
+    },
+    "contentOrganization": {
+      "effort": "high"
+    },
+    "contentGeneration": {
+      "effort": "high",
+      "maxTokens": 32000
+    },
+    "contentReview": {
+      "model": "claude-haiku-4-5-20251001",
+      "effort": "low"
+    },
+    "diagramSvg": {
+      "effort": "medium",
+      "maxTokens": 8000,
+      "thinking": "disabled"
+    },
+    "incrementalMerge": {
+      "effort": "high",
+      "maxTokens": 32000
+    },
+    "distiller": {
+      "model": "claude-haiku-4-5-20251001",
+      "effort": "low"
+    }
   }
 }
