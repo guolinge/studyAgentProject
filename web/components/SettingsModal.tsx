@@ -198,12 +198,12 @@ export default function SettingsModal({
     }
   }, []);
 
-  // Auto-fetch model list when models tab is opened for the first time
+  // Auto-fetch model list when models tab is opened for the first time (stop on error)
   useEffect(() => {
-    if (tab === "models" && !proxyModels && !modelsLoading) {
+    if (tab === "models" && !proxyModels && !modelsLoading && !modelsError) {
       refreshModels();
     }
-  }, [tab, proxyModels, modelsLoading, refreshModels]);
+  }, [tab, proxyModels, modelsLoading, modelsError, refreshModels]);
 
   // Fix 7: patchApp resets "saved" indicator on any user edit
   const patchApp = (patch: Partial<AppSettings>) => {

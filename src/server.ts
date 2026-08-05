@@ -357,13 +357,15 @@ app.put("/api/settings", async (c) => {
 });
 
 app.get("/api/proxy-models", async (c) => {
-  const { anthropicApiKey, anthropicBaseUrl } = loadSettings(SETTINGS_PATH);
-  if (!anthropicApiKey || !anthropicBaseUrl) {
+  const s = loadSettings(SETTINGS_PATH);
+  const apiKey = s.anthropicApiKey || process.env.ANTHROPIC_API_KEY || "";
+  const baseUrl = s.anthropicBaseUrl || process.env.ANTHROPIC_BASE_URL || "";
+  if (!apiKey || !baseUrl) {
     return c.json({ error: "请先在设置中填写 API Key 和网关地址" }, 400);
   }
   try {
-    const res = await fetch(`${anthropicBaseUrl}/v1/models`, {
-      headers: { Authorization: `Bearer ${anthropicApiKey}` },
+    const res = await fetch(`${baseUrl}/v1/models`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
     });
     if (!res.ok) return c.json({ error: `代理返回 ${res.status}` }, 502);
     return c.json(await res.json());
