@@ -7,7 +7,7 @@ import type {
   EffortValue, ThinkingValue,
 } from "@/lib/settingsTypes";
 import {
-  AGENT_ROLE_LABELS, EFFORT_OPTIONS, THINKING_OPTIONS, THEME_OPTIONS,
+  AGENT_ROLE_LABELS, EFFORT_OPTIONS, THINKING_OPTIONS, THEME_OPTIONS, MODEL_OPTIONS,
 } from "@/lib/settingsTypes";
 
 type Tab = "models" | "external" | "feishu" | "behavior";
@@ -52,8 +52,24 @@ function AgentRow({
   return (
     <div className="grid grid-cols-[96px_1fr_110px_72px_96px] gap-2 items-center py-1">
       <span className="text-xs text-gray-600 font-medium truncate">{label}</span>
-      <input type="text" value={model} onChange={(e) => onModel(e.target.value)}
-        placeholder={required ? "必填" : "同默认"} className={cell} />
+      <select value={model} onChange={(e) => onModel(e.target.value)} className={cell}>
+        {!required && <option value="">— 同默认 —</option>}
+        {model && !MODEL_OPTIONS.find((m) => m.id === model) && (
+          <option value={model}>{model}</option>
+        )}
+        {Object.entries(
+          MODEL_OPTIONS.reduce<Record<string, typeof MODEL_OPTIONS>>((acc, m) => {
+            (acc[m.provider] ??= []).push(m);
+            return acc;
+          }, {})
+        ).map(([provider, models]) => (
+          <optgroup key={provider} label={provider}>
+            {models.map((m) => (
+              <option key={m.id} value={m.id}>{m.label}</option>
+            ))}
+          </optgroup>
+        ))}
+      </select>
       <select value={effort} onChange={(e) => onEffort(e.target.value)} className={cell}>
         {!required && <option value="">同默认</option>}
         {EFFORT_OPTIONS.map((v) => <option key={v} value={v}>{v}</option>)}
@@ -221,6 +237,34 @@ export default function SettingsModal({
                       onMaxTokens={(v) => patchDefaults({ maxTokens: v })}
                       onThinking={(v)  => patchDefaults({ thinking: v as ThinkingValue })}
                     />
+                    {/* 价格参考卡片 */}
+                    {(() => {
+                      const m = MODEL_OPTIONS.find((x) => x.id === agents.defaults.model);
+                      return (
+                        <div className="mt-2 rounded-lg bg-gray-50 border border-gray-200 px-4 py-2.5 flex items-center gap-4 flex-wrap text-xs">
+                          <span className="font-medium text-gray-500">
+                            {m ? `${m.provider} · ${m.label}` : (agents.defaults.model || "未选择")}
+                          </span>
+                          {m?.pricing ? (
+                            <>
+                              <span className="text-gray-600">
+                                输入&nbsp;<span className="font-mono font-semibold text-gray-800">{m.pricing.inputPerM}</span>&nbsp;/ M tokens
+                              </span>
+                              <span className="text-gray-600">
+                                输出&nbsp;<span className="font-mono font-semibold text-gray-800">{m.pricing.outputPerM}</span>&nbsp;/ M tokens
+                              </span>
+                              <span className="text-gray-400 ml-auto">公开参考价，实际以代理计费为准</span>
+                            </>
+                          ) : (
+                            <span className="text-gray-400">
+                              价格请参考{" "}
+                              <a href="https://ai.futuoa.com/" target="_blank" rel="noreferrer"
+                                className="underline hover:text-gray-600">FUTU AI 平台</a>
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                   <div>
                     <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">各角色覆盖（空 = 用默认）</p>
