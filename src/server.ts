@@ -47,7 +47,7 @@ import {
 import type { PlacementInfo } from "./orchestrator.js";
 import { tavilySearch, tavilyExtract, formatSearchContext } from "./tools/tavily.js";
 import { runPipeline } from "./orchestrator.js";
-import { patchDiagrams, renderDiagrams, extractDiagramSpecs } from "./diagrams.js";
+import { patchDiagrams, renderDiagrams, extractDiagramSpecs, type DiagramMode } from "./diagrams.js";
 import { mergeIntoDoc } from "./merge.js";
 import { refreshFolderTree } from "./refreshFolderTree.js";
 import type { AgentInput, AgentRole, ResolvedAgentConfig } from "./types.js";
@@ -129,7 +129,7 @@ const ROLE_LABEL: Record<AgentRole, string> = {
   contentOrganization: "内容组织",
   contentGeneration:   "内容生成",
   contentReview:       "内容审核",
-  diagramSvg:          "SVG 作图",
+  diagramSvg:          "作图",
   incrementalMerge:    "增量合并",
   distiller:           "沉淀",
 };
@@ -187,6 +187,8 @@ function buildDeps(runId: string) {
   const effortOverride = process.env.EFFORT_OVERRIDE as ResolvedAgentConfig["effort"] | undefined;
   const noDiagram      = process.env.NO_DIAGRAM === "1";
   const dryRun         = process.env.LARK_DRY_RUN === "1";
+  const mode: DiagramMode = appSettings.svgDiagram ? "svg" : "ascii";
+  const modeLabel = appSettings.svgDiagram ? "SVG 作图" : "字符作图";
 
   const runRole = async (role: AgentRole, input: AgentInput) => {
     const startedAt = Date.now();
@@ -241,7 +243,7 @@ function buildDeps(runId: string) {
             });
             if (!noDiagram) {
               await patchDiagrams(r.incrementalMarkdown, r.url, {
-                loadPrompt, runRole,
+                loadPrompt, runRole, mode,
                 updateDoc: (u, p, c) => larkUpdateStrReplace(u, p, c),
                 onProgress: () => {},
               });
@@ -273,7 +275,7 @@ function buildDeps(runId: string) {
 
   const publish = async (markdown: string, placement: PlacementInfo): Promise<string> => {
     if (dryRun) {
-      const md = noDiagram ? markdown : await renderDiagrams(markdown, { loadPrompt, runRole });
+      const md = noDiagram ? markdown : await renderDiagrams(markdown, { loadPrompt, runRole, mode });
       return `(dry-run)\n${md}`;
     }
     let folderToken: string;
@@ -297,17 +299,17 @@ function buildDeps(runId: string) {
     // 画图 fire-and-forget：不 await，让前端立即拿到链接（问题7）
     if (!noDiagram) {
       patchDiagrams(markdown, url, {
-        loadPrompt, runRole,
+        loadPrompt, runRole, mode,
         updateDoc: (u, p, c) => larkUpdateStrReplace(u, p, c),
         onProgress: () => {},
-        onError: (instruction, reason) =>
-          pushEvent(runId, {
-            type: "step_error",
-            label: `SVG 作图：${instruction.slice(0, 40)}`,
-            message: reason,
-          }),
+        onDiagramStart: (inst) =>
+          pushEvent(runId, { type: "step_start", role: "diagramSvg", label: `${modeLabel}：${inst.slice(0, 40)}` }),
+        onDiagramDone: (inst) =>
+          pushEvent(runId, { type: "progress", role: "diagramSvg", label: `${modeLabel}：${inst.slice(0, 40)}` }),
+        onError: (inst, reason) =>
+          pushEvent(runId, { type: "step_error", label: `${modeLabel}：${inst.slice(0, 40)}`, message: reason }),
       }).catch((e) =>
-        pushEvent(runId, { type: "step_error", label: "SVG 作图", message: (e as Error).message }),
+        pushEvent(runId, { type: "step_error", label: modeLabel, message: (e as Error).message }),
       );
     }
     return url;
@@ -327,16 +329,15 @@ function buildDeps(runId: string) {
     pushEvent(runId, { type: "doc_created", url: docUrl, folderName: "（原文档）" });
     dbSetDocUrl(runId, docUrl, "（原文档）");
     const result = await patchDiagrams(content, docUrl, {
-      loadPrompt,
-      runRole,
+      loadPrompt, runRole, mode,
       updateDoc: (u, p, c) => larkUpdateStrReplace(u, p, c),
       onProgress: () => {},
-      onError: (instruction, reason) =>
-        pushEvent(runId, {
-          type: "step_error",
-          label: `SVG 作图：${instruction.slice(0, 40)}`,
-          message: reason,
-        }),
+      onDiagramStart: (inst) =>
+        pushEvent(runId, { type: "step_start", role: "diagramSvg", label: `${modeLabel}：${inst.slice(0, 40)}` }),
+      onDiagramDone: (inst) =>
+        pushEvent(runId, { type: "progress", role: "diagramSvg", label: `${modeLabel}：${inst.slice(0, 40)}` }),
+      onError: (inst, reason) =>
+        pushEvent(runId, { type: "step_error", label: `${modeLabel}：${inst.slice(0, 40)}`, message: reason }),
     });
     return { url: docUrl, patched: result.patched, total: result.total };
   };

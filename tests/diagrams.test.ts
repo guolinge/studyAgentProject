@@ -82,6 +82,20 @@ describe("patchDiagrams", () => {
       '<whiteboard type="svg">' + clean + "</whiteboard>",
     );
   });
+
+  it("触发 onDiagramStart / onDiagramDone", async () => {
+    const runRole = vi.fn().mockResolvedValue("```\n+--+\n```");
+    const started: string[] = [];
+    const done: string[] = [];
+    await patchDiagrams("【配图指令:图甲】", "http://doc", {
+      loadPrompt, runRole, mode: "ascii",
+      updateDoc: async () => {},
+      onDiagramStart: (i) => started.push(i),
+      onDiagramDone: (i) => done.push(i),
+    });
+    expect(started).toEqual(["图甲"]);
+    expect(done).toEqual(["图甲"]);
+  });
 });
 
 describe("renderDiagram ascii 模式", () => {

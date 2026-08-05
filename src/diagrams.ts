@@ -121,6 +121,8 @@ export interface PatchDeps extends DiagramDeps {
   updateDoc: (docUrl: string, pattern: string, content: string) => Promise<void>;
   onProgress?: (msg: string) => void;
   onError?: (instruction: string, reason: string) => void; // 单张图失败回调（问题8）
+  onDiagramStart?: (instruction: string) => void; // 单张图开始生成
+  onDiagramDone?: (instruction: string) => void;   // 单张图已写入飞书
 }
 
 /**
@@ -150,8 +152,9 @@ export async function patchDiagrams(
   let updateChain: Promise<void> = Promise.resolve();
 
   // 每张图独立生成(并行);生成完后追加进 update 队列
-  const renders = specs.map((spec, i) =>
-    renderDiagram(spec, context, deps).then((svg) => {
+  const renders = specs.map((spec, i) => {
+    deps.onDiagramStart?.(spec.instruction);
+    return renderDiagram(spec, context, deps).then((svg) => {
       if (!svg) {
         deps.onProgress?.(`  ⚠ 第 ${i + 1}/${specs.length} 张校验未过,保留文字占位:${spec.instruction}`);
         deps.onError?.(spec.instruction, "SVG 校验超出重试次数");
@@ -161,10 +164,11 @@ export async function patchDiagrams(
       updateChain = updateChain.then(async () => {
         await deps.updateDoc(docUrl, spec.raw, wrapDiagram(deps.mode, svg));
         patched++;
+        deps.onDiagramDone?.(spec.instruction);
         deps.onProgress?.(`  ✅ 已补 ${patched}/${specs.length} 张:${spec.instruction}`);
       });
-    }),
-  );
+    });
+  });
 
   await Promise.all(renders); // 等所有图生成完毕(update 可能还没跑完)
   await updateChain;          // 等最后一个 update 完成
