@@ -32,7 +32,7 @@ import { loadConfig, resolveAgentConfig, ConfigSchema } from "./config.js";
 import { loadSettings, saveSettings } from "./settingsStore.js";
 import type { AppSettings } from "./settingsStore.js";
 import { loadPrompt } from "./prompts.js";
-import { runAgent, type ModelClient } from "./agentRunner.js";
+import { runAgent, runAgentWithTools, type ModelClient, type ToolDef, type ToolExecutor } from "./agentRunner.js";
 import {
   larkCreateDoc,
   larkCreateFolder,
@@ -45,7 +45,7 @@ import {
   type SearchHit,
 } from "./tools/lark.js";
 import type { PlacementInfo } from "./orchestrator.js";
-import { tavilySearch, formatSearchContext } from "./tools/tavily.js";
+import { tavilySearch, tavilyExtract, formatSearchContext } from "./tools/tavily.js";
 import { runPipeline } from "./orchestrator.js";
 import { patchDiagrams, renderDiagrams, extractDiagramSpecs } from "./diagrams.js";
 import { mergeIntoDoc } from "./merge.js";
@@ -125,6 +125,7 @@ function pushEvent(id: string, event: PipelineEvent): void {
 
 const ROLE_LABEL: Record<AgentRole, string> = {
   questionAnalysis:    "问题分析",
+  searchResearch:      "联网研究",
   contentOrganization: "内容组织",
   contentGeneration:   "内容生成",
   contentReview:       "内容审核",
@@ -143,6 +144,44 @@ function buildDeps(runId: string) {
   const baseURL = appSettings.anthropicBaseUrl || undefined;
 
   const sdk = new Anthropic({ apiKey, baseURL: baseURL || undefined });
+
+  // 联网研究工具(searchResearch 角色用)
+  const SEARCH_TOOLS: ToolDef[] = [
+    {
+      name: "web_search",
+      description: "搜索网页，返回若干条标题、URL 和摘要（不含正文）。用它发现资料来源。",
+      input_schema: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "搜索查询词" },
+          max_results: { type: "integer", description: "返回条数，默认 5" },
+        },
+        required: ["query"],
+      },
+    },
+    {
+      name: "read_page",
+      description: "读取指定 URL 的网页正文全文。用它深读值得精读的来源。",
+      input_schema: {
+        type: "object",
+        properties: { url: { type: "string", description: "要读取的网页 URL" } },
+        required: ["url"],
+      },
+    },
+  ];
+
+  const searchExecutor: ToolExecutor = async (name, rawInput) => {
+    const args = (rawInput ?? {}) as { query?: string; url?: string; max_results?: number };
+    if (!baseURL) return "联网不可用（未配置网关地址）";
+    if (name === "web_search") {
+      const r = await tavilySearch(args.query ?? "", { base: baseURL, apiKey, maxResults: args.max_results ?? 5 });
+      return formatSearchContext(r);
+    }
+    if (name === "read_page") {
+      return await tavilyExtract(args.url ?? "", { base: baseURL, apiKey });
+    }
+    return `未知工具：${name}`;
+  };
 
   const modelOverride  = process.env.MODEL_OVERRIDE;
   const effortOverride = process.env.EFFORT_OVERRIDE as ResolvedAgentConfig["effort"] | undefined;
@@ -176,7 +215,9 @@ function buildDeps(runId: string) {
       effort: effortOverride || base.effort,
     };
     pushEvent(runId, { type: "step_start", role, label: ROLE_LABEL[role] });
-    const result = await runAgent(input, cfg, wrappedClient);
+    const result = role === "searchResearch"
+      ? await runAgentWithTools(input, cfg, wrappedClient, SEARCH_TOOLS, searchExecutor)
+      : await runAgent(input, cfg, wrappedClient);
     const durationMs = Date.now() - startedAt;
     pushEvent(runId, { type: "progress", role, label: ROLE_LABEL[role] });
     dbAddStep(runId, role, ROLE_LABEL[role], inputTok, outputTok, durationMs, startedAt);
@@ -184,13 +225,7 @@ function buildDeps(runId: string) {
     return result;
   };
 
-  const search =
-    process.env.NO_SEARCH === "1" || !baseURL
-      ? undefined
-      : async (query: string) => {
-          const r = await tavilySearch(query, { base: baseURL, apiKey });
-          return formatSearchContext(r);
-        };
+  const researchEnabled = process.env.NO_SEARCH !== "1" && !!baseURL;
 
   const dedup =
     process.env.NO_DEDUP === "1" || !baseURL
@@ -306,7 +341,7 @@ function buildDeps(runId: string) {
     return { url: docUrl, patched: result.patched, total: result.total };
   };
 
-  return { loadPrompt, runRole, gate, publish, search, dedup, updateIndex, onReviewFeedback, patchDocDiagrams, reviewMaxRetries: appSettings.maxReviewRetries };
+  return { loadPrompt, runRole, gate, publish, researchEnabled, dedup, updateIndex, onReviewFeedback, patchDocDiagrams, reviewMaxRetries: appSettings.maxReviewRetries };
 }
 
 // ── Hono 应用 ─────────────────────────────────────────────────────────────────
