@@ -138,26 +138,28 @@ describe("runPipeline", () => {
     expect(gen.input.system).toContain("STYLE-RULES");
   });
 
-  it("calls search once and injects its context into organization & generation", async () => {
+  it("runs searchResearch and injects its memo into organization & generation", async () => {
     const { runRole, calls } = makeRunRole({
-      questionAnalysis: "O",
-      contentOrganization: "S",
-      contentGeneration: "MD",
-      contentReview: "PASS",
+      questionAnalysis:    "## 意图\nX\n## 一级话题\n- a",
+      searchResearch:      "研究备忘录：MEMO",
+      contentOrganization: "骨架",
+      contentGeneration:   "正文",
+      contentReview:       "PASS",
     });
-    const search = vi.fn().mockResolvedValue("SEARCHCTX");
-    await runPipeline("X", {
-      loadPrompt,
-      runRole,
-      gate: vi.fn().mockResolvedValue(""),
-      publish: vi.fn().mockResolvedValue("u"),
-      search,
+    const gate = vi.fn().mockResolvedValue("");
+    const publish = vi.fn().mockResolvedValue("http://doc");
+    await runPipeline("讲讲 X", {
+      loadPrompt, runRole, gate, publish, researchEnabled: true,
     });
-    expect(search).toHaveBeenCalledTimes(1); // 搜一次,不是每个 agent 各搜一遍
-    const org = calls.find((c) => c.role === "contentOrganization")!;
-    const gen = calls.find((c) => c.role === "contentGeneration")!;
-    expect(org.input.user).toContain("SEARCHCTX");
-    expect(gen.input.user).toContain("SEARCHCTX");
+
+    // searchResearch 被调用一次
+    const researchCalls = calls.filter((c) => c.role === "searchResearch");
+    expect(researchCalls).toHaveLength(1);
+    // 备忘录注入到内容组织与内容生成的 user
+    const orgCall = calls.find((c) => c.role === "contentOrganization");
+    const genCall = calls.find((c) => c.role === "contentGeneration");
+    expect(orgCall!.input.user).toContain("研究备忘录：MEMO");
+    expect(genCall!.input.user).toContain("研究备忘录：MEMO");
   });
 
   it("dedup: merge choice returns the merged doc and skips the new-doc pipeline", async () => {
@@ -245,21 +247,19 @@ describe("runPipeline", () => {
     expect(res.feedbacks[1]).toEqual({ gate: "门2 · 确认骨架", feedback: "要加一节复杂度分析" });
   });
 
-  it("degrades gracefully when search throws (still publishes)", async () => {
-    const { runRole } = makeRunRole({
-      questionAnalysis: "O",
-      contentOrganization: "S",
-      contentGeneration: "MD",
-      contentReview: "PASS",
+  it("degrades gracefully when searchResearch throws (still publishes)", async () => {
+    const runRole = vi.fn(async (role: string) => {
+      if (role === "searchResearch") throw new Error("网关不支持工具");
+      if (role === "questionAnalysis") return "## 意图\nX\n## 一级话题\n- a";
+      if (role === "contentReview") return "PASS";
+      return "stub";
     });
-    const search = vi.fn().mockRejectedValue(new Error("net down"));
-    const res = asSingle(await runPipeline("X", {
-      loadPrompt,
-      runRole,
-      gate: vi.fn().mockResolvedValue(""),
-      publish: vi.fn().mockResolvedValue("u"),
-      search,
-    }));
-    expect(res.url).toBe("u"); // 搜索失败不阻断,仍 publish
+    const gate = vi.fn().mockResolvedValue("");
+    const publish = vi.fn().mockResolvedValue("http://doc");
+    const res = await runPipeline("讲讲 X", {
+      loadPrompt, runRole, gate, publish, researchEnabled: true,
+    });
+    expect(publish).toHaveBeenCalledOnce(); // 研究失败仍然出稿
+    expect((res as { kind: string }).kind).toBe("single");
   });
 });

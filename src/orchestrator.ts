@@ -132,7 +132,7 @@ export interface PipelineDeps {
   gate: Asker;              // 门1/门2/查重门共用同一个 Asker 实例
   publish: (markdown: string, placement: PlacementInfo) => Promise<string>; // 写飞书,返回文档 URL
   reviewMaxRetries?: number; // 审核打回上限,默认 2
-  search?: (query: string) => Promise<string>;    // 联网搜索,返回已格式化上下文;不传则跳过
+  researchEnabled?: boolean; // 开启联网研究步骤(searchResearch)
   dedup?: {
     search: (keyword: string) => Promise<SearchHit[]>; // 查重搜索
     merge: (userInput: string, target: SearchHit) => Promise<{ url: string; incrementalMarkdown: string }>;
@@ -260,19 +260,21 @@ export async function runPipeline(userInput: string, deps: PipelineDeps): Promis
     }
   }
 
-  // 联网搜索:搜一次,结果顺流水线下传(注入到组织和生成的 user prompt)
-  // 失败时优雅降级:不中断流水线,只是生成内容不含最新资料
-  let searchContext = "";
-  if (deps.search) {
+  // 联网研究(searchResearch):带工具的 agent 自主检索,产出研究备忘录
+  // 失败时优雅降级:不中断流水线,只是生成内容不含研究资料
+  let researchMemo = "";
+  if (deps.researchEnabled) {
+    const researchSystem = buildSystem(deps.loadPrompt, "search-research", false);
+    const researchUser = `${userInput}\n\n【已确认的意图与一级话题】\n${outline1}`;
     try {
-      searchContext = await deps.search(userInput);
+      researchMemo = await deps.runRole("searchResearch", { system: researchSystem, user: researchUser });
     } catch (e) {
-      console.error(`  ⚠ 联网搜索失败,降级为纯模型作答:${(e as Error).message}`);
-      searchContext = "";
+      console.error(`  ⚠ 联网研究失败,降级为纯模型作答:${(e as Error).message}`);
+      researchMemo = "";
     }
   }
-  // 工具函数:有搜索结果时追加到 base 末尾;没有时原样返回
-  const withSearch = (base: string) => (searchContext ? `${base}\n\n${searchContext}` : base);
+  // 工具函数:有研究备忘录时追加到 base 末尾;没有时原样返回
+  const withSearch = (base: string) => (researchMemo ? `${base}\n\n${researchMemo}` : base);
 
   // ② 内容组织 →门2(重):确认三级骨架(输入含问题分析产出 + 搜索结果)
   const orgSystem = buildSystem(deps.loadPrompt, "content-organization", true);
