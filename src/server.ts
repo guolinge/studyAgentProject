@@ -139,9 +139,8 @@ function buildDeps(runId: string) {
   const config      = loadConfig();
   const appSettings = loadSettings(SETTINGS_PATH);
 
-  // settings.json takes priority over env vars
-  const apiKey  = appSettings.anthropicApiKey  || process.env.ANTHROPIC_API_KEY  || "";
-  const baseURL = appSettings.anthropicBaseUrl || process.env.ANTHROPIC_BASE_URL || undefined;
+  const apiKey  = appSettings.anthropicApiKey;
+  const baseURL = appSettings.anthropicBaseUrl || undefined;
 
   const sdk = new Anthropic({ apiKey, baseURL: baseURL || undefined });
 
@@ -358,8 +357,8 @@ app.put("/api/settings", async (c) => {
 
 app.get("/api/proxy-models", async (c) => {
   const s = loadSettings(SETTINGS_PATH);
-  const apiKey = s.anthropicApiKey || process.env.ANTHROPIC_API_KEY || "";
-  const baseUrl = s.anthropicBaseUrl || process.env.ANTHROPIC_BASE_URL || "";
+  const apiKey = s.anthropicApiKey;
+  const baseUrl = s.anthropicBaseUrl;
   if (!apiKey || !baseUrl) {
     return c.json({ error: "请先在设置中填写 API Key 和网关地址" }, 400);
   }
