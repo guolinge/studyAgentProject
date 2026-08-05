@@ -399,7 +399,7 @@ export default function SettingsModal({
       onClick={onClose}
     >
       <div
-        className="relative bg-white rounded-2xl shadow-2xl w-full max-w-3xl mx-4 max-h-[90vh] flex flex-col"
+        className="relative bg-white rounded-2xl shadow-2xl w-full max-w-3xl mx-4 h-[680px] max-h-[90vh] flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
