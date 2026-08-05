@@ -15,6 +15,7 @@
  */
 
 import { extractSvg, lintSvg } from "./tools/svg.js";
+import { extractAsciiBlock, lintAscii } from "./tools/ascii.js";
 import type { AgentInput, AgentRole } from "./types.js";
 
 export interface DiagramSpec {
@@ -37,10 +38,20 @@ export function extractDiagramSpecs(markdown: string): DiagramSpec[] {
   return specs;
 }
 
+export type DiagramMode = "ascii" | "svg";
+
 export interface DiagramDeps {
   loadPrompt: (name: string) => string;
   runRole: (role: AgentRole, input: AgentInput) => Promise<string>;
-  maxRetries?: number; // SVG 校验失败后最多重试几次,默认 2
+  mode: DiagramMode;      // 必填：ascii(默认) | svg
+  maxRetries?: number; // 校验失败后最多重试几次,默认 2
+}
+
+/** 按 mode 决定写入飞书的包装：SVG→画板，ASCII→围栏代码块 */
+function wrapDiagram(mode: DiagramMode, block: string): string {
+  return mode === "svg"
+    ? `<whiteboard type="svg">${block}</whiteboard>`
+    : "\n```\n" + block + "\n```\n";
 }
 
 /**
@@ -58,31 +69,34 @@ export async function renderDiagram(
   context: string,
   deps: DiagramDeps,
 ): Promise<string | null> {
-  // system = SVG 生成角色 prompt + drawing-rules(飞书兼容约束 + 审美规范)
-  const system = `${deps.loadPrompt("diagram-svg")}\n\n---\n\n${deps.loadPrompt("drawing-rules")}`;
+  const rolePrompt = deps.mode === "svg" ? "diagram-svg" : "diagram-ascii";
+  const rulesPrompt = deps.mode === "svg" ? "drawing-rules" : "drawing-rules-ascii";
+  const system = `${deps.loadPrompt(rolePrompt)}\n\n---\n\n${deps.loadPrompt(rulesPrompt)}`;
+  const extract = deps.mode === "svg" ? extractSvg : extractAsciiBlock;
+  const lint: (s: string) => { ok: boolean; issues: string[] } =
+    deps.mode === "svg" ? lintSvg : lintAscii;
   const maxRetries = deps.maxRetries ?? 2;
-  let feedback = ""; // 上一轮的问题描述,空字符串表示第一次尝试
+  let feedback = "";
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const user = `【配图指令:${spec.instruction}】\n\n【上下文】\n${context}${feedback}`;
     const out = await deps.runRole("diagramSvg", { system, user });
 
-    let svg: string;
+    let block: string;
     try {
-      svg = extractSvg(out); // 从 agent 输出中提取 <svg>...</svg>
+      block = extract(out);
     } catch {
-      // agent 没有输出有效 SVG 块,告知并重试
-      feedback = "\n\n【上一版问题】没有输出有效的 <svg> 块,请只输出一个完整的 <svg>…</svg>。";
+      feedback = deps.mode === "svg"
+        ? "\n\n【上一版问题】没有输出有效的 <svg> 块，请只输出一个完整的 <svg>…</svg>。"
+        : "\n\n【上一版问题】没有输出围栏代码块，请只输出一个 ```…``` 代码块，块内是纯字符图。";
       continue;
     }
 
-    const lint = lintSvg(svg);
-    if (lint.ok) return svg; // 校验通过,返回
-
-    // 把校验问题逐条告诉 agent,让它在下一轮修正
-    feedback = `\n\n【上一版校验未通过,请逐条修正后重出】\n${lint.issues.join("\n")}`;
+    const res = lint(block);
+    if (res.ok) return block;
+    feedback = `\n\n【上一版校验未通过，请逐条修正后重出】\n${res.issues.join("\n")}`;
   }
-  return null; // 超出重试次数,降级
+  return null;
 }
 
 /**
@@ -97,7 +111,7 @@ export async function renderDiagrams(markdown: string, deps: DiagramDeps): Promi
   for (const spec of specs) {
     const svg = await renderDiagram(spec, context, deps);
     if (svg) {
-      result = result.replace(spec.raw, `<whiteboard type="svg">${svg}</whiteboard>`);
+      result = result.replace(spec.raw, wrapDiagram(deps.mode, svg));
     }
   }
   return result;
@@ -145,7 +159,7 @@ export async function patchDiagrams(
       }
       // 追加到串行链末尾:等前一个 update 完成后再执行本次 update
       updateChain = updateChain.then(async () => {
-        await deps.updateDoc(docUrl, spec.raw, `<whiteboard type="svg">${svg}</whiteboard>`);
+        await deps.updateDoc(docUrl, spec.raw, wrapDiagram(deps.mode, svg));
         patched++;
         deps.onProgress?.(`  ✅ 已补 ${patched}/${specs.length} 张:${spec.instruction}`);
       });

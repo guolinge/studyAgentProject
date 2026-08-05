@@ -33,6 +33,7 @@ describe("renderDiagram", () => {
     const svg = await renderDiagram({ raw: "【配图指令:x】", instruction: "x" }, "ctx", {
       loadPrompt,
       runRole,
+      mode: "svg",
     });
     expect(svg).toBe(clean);
     expect(runRole).toHaveBeenCalledTimes(2);
@@ -44,6 +45,7 @@ describe("renderDiagram", () => {
     const svg = await renderDiagram({ raw: "【配图指令:x】", instruction: "x" }, "ctx", {
       loadPrompt,
       runRole,
+      mode: "svg",
       maxRetries: 2,
     });
     expect(svg).toBeNull();
@@ -57,7 +59,7 @@ describe("renderDiagrams", () => {
     const runRole = vi.fn(async (_role: string, input: { user: string }) =>
       input.user.includes("好图") ? clean : dirty,
     );
-    const out = await renderDiagrams(md, { loadPrompt, runRole, maxRetries: 1 });
+    const out = await renderDiagrams(md, { loadPrompt, runRole, mode: "svg", maxRetries: 1 });
     expect(out).toContain('<whiteboard type="svg">' + clean + "</whiteboard>");
     expect(out).toContain("【配图指令:坏图】"); // 失败的保留文字占位
     expect(out).not.toContain("【配图指令:好图】"); // 成功的被替换
@@ -71,7 +73,7 @@ describe("patchDiagrams", () => {
       input.user.includes("好图") ? clean : dirty,
     );
     const updateDoc = vi.fn().mockResolvedValue(undefined);
-    const res = await patchDiagrams(md, "URL", { loadPrompt, runRole, updateDoc, maxRetries: 1 });
+    const res = await patchDiagrams(md, "URL", { loadPrompt, runRole, mode: "svg", updateDoc, maxRetries: 1 });
     expect(res).toEqual({ total: 2, patched: 1 });
     expect(updateDoc).toHaveBeenCalledTimes(1);
     expect(updateDoc).toHaveBeenCalledWith(
@@ -79,5 +81,28 @@ describe("patchDiagrams", () => {
       "【配图指令:好图】",
       '<whiteboard type="svg">' + clean + "</whiteboard>",
     );
+  });
+});
+
+describe("renderDiagram ascii 模式", () => {
+  it("提取纯 ascii 块并通过校验", async () => {
+    const runRole = vi.fn().mockResolvedValue("```\n+--+\n```");
+    const out = await renderDiagram(
+      { raw: "【配图指令:x】", instruction: "x" }, "ctx",
+      { loadPrompt, runRole, mode: "ascii" },
+    );
+    expect(out).toBe("+--+");
+    expect(runRole.mock.calls[0][1].system).toMatch(/DIAGRAM-ASCII|DRAWING-RULES-ASCII/);
+  });
+});
+
+describe("renderDiagrams ascii 包装", () => {
+  it("替换为围栏代码块，不含 whiteboard", async () => {
+    const runRole = vi.fn().mockResolvedValue("```\n+--+\n|甲|\n+--+\n```");
+    const md = "前言\n【配图指令:示意】\n后语";
+    const result = await renderDiagrams(md, { loadPrompt, runRole, mode: "ascii" });
+    expect(result).toContain("```");
+    expect(result).toContain("+--+");
+    expect(result).not.toContain("whiteboard");
   });
 });
