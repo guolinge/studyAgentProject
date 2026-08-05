@@ -118,3 +118,34 @@ export function formatSearchContext(result: TavilySearchResult): string {
   }
   return lines.join("\n");
 }
+
+/**
+ * 纯函数:构造 Tavily extract 的请求 URL 与 body。
+ * extract 与 search 同属透明代理,路径为 /tavily/api-server/extract。
+ * body.urls 传数组;这里一次只取一个 URL。
+ */
+export function buildExtractRequest(pageUrl: string, opts: { base: string }): { url: string; body: string } {
+  const base = opts.base.replace(/\/+$/, "");
+  const url = `${base}/tavily/api-server/extract`;
+  const body = JSON.stringify({ urls: [pageUrl] });
+  return { url, body };
+}
+
+/**
+ * 读取单个网页正文全文。
+ * 成功返回 results[0].raw_content;无内容时返回可读提示(不 throw,
+ * 让 agent 能据此换一篇再读,而不是整轮失败)。
+ */
+export async function tavilyExtract(pageUrl: string, deps: TavilyDeps): Promise<string> {
+  const httpPost = deps.httpPost ?? defaultHttpPost;
+  const { url, body } = buildExtractRequest(pageUrl, { base: deps.base });
+  const headers = {
+    Authorization: `Bearer ${deps.apiKey}`,
+    "Content-Type": "application/json",
+  };
+  const raw = await httpPost(url, headers, body);
+  const parsed = JSON.parse(raw) as { results?: Array<{ url?: string; raw_content?: string }> };
+  const content = parsed.results?.[0]?.raw_content ?? "";
+  if (!content.trim()) return `（未能提取 ${pageUrl} 的正文）`;
+  return content;
+}

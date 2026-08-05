@@ -69,3 +69,49 @@ describe("formatSearchContext", () => {
     expect(ctx).toContain("标题B");
   });
 });
+
+import { buildExtractRequest, tavilyExtract } from "../src/tools/tavily.js";
+
+describe("buildExtractRequest", () => {
+  it("targets the tavily extract path with urls in body", () => {
+    const { url, body } = buildExtractRequest("https://pnpm.io", {
+      base: "https://llm-proxy.futuoa.com",
+    });
+    expect(url).toBe("https://llm-proxy.futuoa.com/tavily/api-server/extract");
+    const parsed = JSON.parse(body);
+    expect(parsed.urls).toEqual(["https://pnpm.io"]);
+  });
+
+  it("trims trailing slash on base", () => {
+    const { url } = buildExtractRequest("https://a.com", { base: "https://host/" });
+    expect(url).toBe("https://host/tavily/api-server/extract");
+  });
+});
+
+const extractSample = JSON.stringify({
+  results: [
+    { url: "https://pnpm.io", raw_content: "pnpm 全文内容……很长的正文……" },
+  ],
+  failed_results: [],
+});
+
+describe("tavilyExtract", () => {
+  it("returns the raw_content of the first result and sends auth header", async () => {
+    const httpPost: HttpPost = vi.fn().mockResolvedValue(extractSample);
+    const text = await tavilyExtract("https://pnpm.io", {
+      base: "https://llm-proxy.futuoa.com", apiKey: "K", httpPost,
+    });
+    expect(text).toContain("pnpm 全文内容");
+    const [callUrl, headers] = (httpPost as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(callUrl).toContain("/tavily/api-server/extract");
+    expect(headers.Authorization).toBe("Bearer K");
+  });
+
+  it("returns a readable message when extraction yields no content", async () => {
+    const httpPost: HttpPost = vi.fn().mockResolvedValue(
+      JSON.stringify({ results: [], failed_results: [{ url: "https://x.com" }] }),
+    );
+    const text = await tavilyExtract("https://x.com", { base: "B", apiKey: "K", httpPost });
+    expect(text).toContain("未能提取");
+  });
+});
