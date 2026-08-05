@@ -13,6 +13,7 @@
  */
 export type AgentRole =
   | "questionAnalysis"     // 问题分析:framing 用户意图,输出一级话题 + 查重关键词
+  | "searchResearch"       // 联网研究:带工具(search/read_page)自主检索,输出研究备忘录
   | "contentOrganization"  // 内容组织:生成三级骨架(门2 前)
   | "contentGeneration"    // 内容生成:产出完整正文 Markdown(含【配图指令】占位)
   | "contentReview"        // 内容审核:对照骨架检查,PASS/FAIL

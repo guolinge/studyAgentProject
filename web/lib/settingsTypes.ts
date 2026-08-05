@@ -38,6 +38,7 @@ export interface SettingsResponse {
 
 export const AGENT_ROLE_LABELS: Record<string, string> = {
   questionAnalysis:    "问题分析",
+  searchResearch:      "联网研究",
   contentOrganization: "内容组织",
   contentGeneration:   "内容生成",
   contentReview:       "内容审核",
