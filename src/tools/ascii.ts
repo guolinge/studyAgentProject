@@ -53,16 +53,16 @@ const MAX_WIDTH = 100;
  *   ③ 内容非空
  * 不做 junction 对齐审计（太脆，靠 prompt 纪律）。
  */
-export function lintAscii(ascii: string): AsciiLintResult {
+export function lintAscii(block: string): AsciiLintResult {
   const issues: string[] = [];
-  if (!ascii.trim()) {
+  if (!block.trim()) {
     issues.push("图内容为空");
     return { ok: false, issues };
   }
-  if (BANNED_UNICODE.test(ascii)) {
+  if (BANNED_UNICODE.test(block)) {
     issues.push("使用了禁用的 Unicode 制表符/装饰符(如 ┌─┐│●▶)，只能用 + - | > < ^ v");
   }
-  const lines = ascii.split("\n");
+  const lines = block.split("\n");
   for (let i = 0; i < lines.length; i++) {
     const w = displayWidth(lines[i]);
     if (w > MAX_WIDTH) {

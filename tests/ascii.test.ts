@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { extractAsciiBlock, lintAscii } from "../src/tools/ascii.js";
+import { extractAsciiBlock, lintAscii, displayWidth } from "../src/tools/ascii.js";
 
 describe("extractAsciiBlock", () => {
   it("提取裸围栏代码块内容", () => {
@@ -42,5 +42,20 @@ describe("lintAscii", () => {
 
   it("空内容 → 失败", () => {
     expect(lintAscii("   \n  ").ok).toBe(false);
+  });
+});
+
+describe("displayWidth", () => {
+  it("ASCII 单字节按 1 列", () => {
+    expect(displayWidth("+--+")).toBe(4);
+  });
+
+  it("中文/全角按 2 列", () => {
+    expect(displayWidth("节点")).toBe(4);       // 2 字 × 2
+    expect(displayWidth("A节")).toBe(3);          // 1 + 2
+  });
+
+  it("边界：50 中文 = 100 列", () => {
+    expect(displayWidth("阿".repeat(50))).toBe(100);
   });
 });
