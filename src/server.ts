@@ -356,6 +356,22 @@ app.put("/api/settings", async (c) => {
   return c.json({ ok: true });
 });
 
+app.get("/api/proxy-models", async (c) => {
+  const { anthropicApiKey, anthropicBaseUrl } = loadSettings(SETTINGS_PATH);
+  if (!anthropicApiKey || !anthropicBaseUrl) {
+    return c.json({ error: "请先在设置中填写 API Key 和网关地址" }, 400);
+  }
+  try {
+    const res = await fetch(`${anthropicBaseUrl}/v1/models`, {
+      headers: { Authorization: `Bearer ${anthropicApiKey}` },
+    });
+    if (!res.ok) return c.json({ error: `代理返回 ${res.status}` }, 502);
+    return c.json(await res.json());
+  } catch (e) {
+    return c.json({ error: (e as Error).message }, 502);
+  }
+});
+
 app.get("/health", (c) => c.json({ ok: true }));
 
 // 飞书文档 URL 模式（用于拖拽引用 outline 注入）

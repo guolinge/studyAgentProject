@@ -1,14 +1,44 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { getSettings, saveSettings } from "@/lib/settingsApi";
+import { getSettings, saveSettings, getProxyModels } from "@/lib/settingsApi";
 import type {
   AppSettings, AgentConfig, AgentDefaults, AgentOverride,
-  EffortValue, ThinkingValue,
+  EffortValue, ThinkingValue, ModelOption,
 } from "@/lib/settingsTypes";
 import {
   AGENT_ROLE_LABELS, EFFORT_OPTIONS, THINKING_OPTIONS, THEME_OPTIONS, MODEL_OPTIONS,
 } from "@/lib/settingsTypes";
+
+const PROVIDER_LABELS: Record<string, string> = {
+  aws: "AWS", azure: "Azure", google: "Google",
+  volcengine: "火山引擎", dashscope: "DashScope",
+  private: "私有部署", huggingface: "HuggingFace",
+};
+
+function buildOptions(proxyIds: string[]): ModelOption[] {
+  const knownById = new Map(MODEL_OPTIONS.map((m) => [m.id, m]));
+  const result: ModelOption[] = [];
+  const added = new Set<string>();
+  for (const id of proxyIds) {
+    added.add(id);
+    result.push(
+      knownById.get(id) ?? (() => {
+        const slash = id.indexOf("/");
+        const rawPfx = slash > 0 ? id.slice(0, slash) : "";
+        return {
+          id,
+          label: slash > 0 ? id.slice(slash + 1) : id,
+          provider: PROVIDER_LABELS[rawPfx] ?? (rawPfx || "其他"),
+        };
+      })()
+    );
+  }
+  for (const m of MODEL_OPTIONS) {
+    if (!added.has(m.id)) result.push(m);
+  }
+  return result;
+}
 
 type Tab = "models" | "external" | "feishu" | "behavior";
 
@@ -38,11 +68,12 @@ function Field({ label, hint, children }: {
 }
 
 function AgentRow({
-  label, model, effort, maxTokens, thinking, required,
+  label, model, effort, maxTokens, thinking, required, modelOptions,
   onModel, onEffort, onMaxTokens, onThinking,
 }: {
   label: string; model: string; effort: string;
   maxTokens: number; thinking: string; required: boolean;
+  modelOptions?: ModelOption[];
   onModel: (v: string) => void; onEffort: (v: string) => void;
   onMaxTokens: (v: number) => void; onThinking: (v: string) => void;
 }) {
@@ -52,24 +83,28 @@ function AgentRow({
   return (
     <div className="grid grid-cols-[96px_1fr_110px_72px_96px] gap-2 items-center py-1">
       <span className="text-xs text-gray-600 font-medium truncate">{label}</span>
-      <select value={model} onChange={(e) => onModel(e.target.value)} className={cell}>
-        {!required && <option value="">— 同默认 —</option>}
-        {model && !MODEL_OPTIONS.find((m) => m.id === model) && (
-          <option value={model}>{model}</option>
-        )}
-        {Object.entries(
-          MODEL_OPTIONS.reduce<Record<string, typeof MODEL_OPTIONS>>((acc, m) => {
-            (acc[m.provider] ??= []).push(m);
-            return acc;
-          }, {})
-        ).map(([provider, models]) => (
-          <optgroup key={provider} label={provider}>
-            {models.map((m) => (
-              <option key={m.id} value={m.id}>{m.label}</option>
+      {(() => {
+        const opts = modelOptions ?? MODEL_OPTIONS;
+        const grouped = opts.reduce<Record<string, ModelOption[]>>((acc, m) => {
+          (acc[m.provider] ??= []).push(m);
+          return acc;
+        }, {});
+        return (
+          <select value={model} onChange={(e) => onModel(e.target.value)} className={cell}>
+            {!required && <option value="">— 同默认 —</option>}
+            {model && !opts.find((m) => m.id === model) && (
+              <option value={model}>{model}</option>
+            )}
+            {Object.entries(grouped).map(([provider, models]) => (
+              <optgroup key={provider} label={provider}>
+                {models.map((m) => (
+                  <option key={m.id} value={m.id}>{m.label}</option>
+                ))}
+              </optgroup>
             ))}
-          </optgroup>
-        ))}
-      </select>
+          </select>
+        );
+      })()}
       <select value={effort} onChange={(e) => onEffort(e.target.value)} className={cell}>
         {!required && <option value="">同默认</option>}
         {EFFORT_OPTIONS.map((v) => <option key={v} value={v}>{v}</option>)}
@@ -95,13 +130,16 @@ export default function SettingsModal({
   onClose: () => void;
   onThemeChange: (theme: string) => void;
 }) {
-  const [tab,     setTab]     = useState<Tab>("models");
-  const [app,     setApp]     = useState<AppSettings | null>(null);
-  const [agents,  setAgents]  = useState<AgentConfig | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [saving,  setSaving]  = useState(false);
-  const [error,   setError]   = useState<string | null>(null);
-  const [saved,   setSaved]   = useState(false);
+  const [tab,          setTab]          = useState<Tab>("models");
+  const [app,          setApp]          = useState<AppSettings | null>(null);
+  const [agents,       setAgents]       = useState<AgentConfig | null>(null);
+  const [loading,      setLoading]      = useState(true);
+  const [saving,       setSaving]       = useState(false);
+  const [error,        setError]        = useState<string | null>(null);
+  const [saved,        setSaved]        = useState(false);
+  const [proxyModels,  setProxyModels]  = useState<ModelOption[] | null>(null);
+  const [modelsLoading,setModelsLoading]= useState(false);
+  const [modelsError,  setModelsError]  = useState<string | null>(null);
 
   // Fix 1: ref to track the "saved" auto-clear timer
   const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -146,6 +184,26 @@ export default function SettingsModal({
       setSaving(false);
     }
   }, [app, agents, onThemeChange]);
+
+  const refreshModels = useCallback(async () => {
+    setModelsLoading(true);
+    setModelsError(null);
+    try {
+      const ids = await getProxyModels();
+      setProxyModels(buildOptions(ids));
+    } catch (e) {
+      setModelsError((e as Error).message);
+    } finally {
+      setModelsLoading(false);
+    }
+  }, []);
+
+  // Auto-fetch model list when models tab is opened for the first time
+  useEffect(() => {
+    if (tab === "models" && !proxyModels && !modelsLoading) {
+      refreshModels();
+    }
+  }, [tab, proxyModels, modelsLoading, refreshModels]);
 
   // Fix 7: patchApp resets "saved" indicator on any user edit
   const patchApp = (patch: Partial<AppSettings>) => {
@@ -222,7 +280,21 @@ export default function SettingsModal({
               {tab === "models" && (
                 <div className="space-y-4">
                   <div>
-                    <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">全局默认</p>
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">全局默认</p>
+                      <button
+                        type="button"
+                        onClick={refreshModels}
+                        disabled={modelsLoading}
+                        className="text-xs text-gray-400 hover:text-gray-600 disabled:opacity-50 flex items-center gap-1"
+                      >
+                        <span className={modelsLoading ? "inline-block animate-spin" : ""}>↻</span>
+                        {modelsLoading ? "加载中…" : modelsError ? "重试" : "刷新模型列表"}
+                      </button>
+                    </div>
+                    {modelsError && (
+                      <p className="text-xs text-amber-600 mb-2">⚠ {modelsError}（已回退到内置列表）</p>
+                    )}
                     <div className="grid grid-cols-[96px_1fr_110px_72px_96px] gap-2 mb-1">
                       {["角色", "model", "effort", "maxTokens", "thinking"].map((h) => (
                         <span key={h} className="text-[11px] text-gray-400 font-medium">{h}</span>
@@ -231,7 +303,7 @@ export default function SettingsModal({
                     <AgentRow
                       label="默认" model={agents.defaults.model} effort={agents.defaults.effort}
                       maxTokens={agents.defaults.maxTokens} thinking={agents.defaults.thinking}
-                      required
+                      required modelOptions={proxyModels ?? undefined}
                       onModel={(v)     => patchDefaults({ model: v })}
                       onEffort={(v)    => patchDefaults({ effort: v as EffortValue })}
                       onMaxTokens={(v) => patchDefaults({ maxTokens: v })}
@@ -239,7 +311,8 @@ export default function SettingsModal({
                     />
                     {/* 价格参考卡片 */}
                     {(() => {
-                      const m = MODEL_OPTIONS.find((x) => x.id === agents.defaults.model);
+                      const opts = proxyModels ?? MODEL_OPTIONS;
+                      const m = opts.find((x) => x.id === agents.defaults.model);
                       return (
                         <div className="mt-2 rounded-lg bg-gray-50 border border-gray-200 px-4 py-2.5 flex items-center gap-4 flex-wrap text-xs">
                           <span className="font-medium text-gray-500">
@@ -278,7 +351,7 @@ export default function SettingsModal({
                             label={AGENT_ROLE_LABELS[role] ?? role}
                             model={ov.model ?? ""} effort={ov.effort ?? ""}
                             maxTokens={ov.maxTokens ?? 0} thinking={ov.thinking ?? ""}
-                            required={false}
+                            required={false} modelOptions={proxyModels ?? undefined}
                             onModel={(v)     => patchOverride(role, { model: v || undefined })}
                             onEffort={(v)    => patchOverride(role, { effort: (v || undefined) as EffortValue | undefined })}
                             onMaxTokens={(v) => patchOverride(role, { maxTokens: v || undefined })}

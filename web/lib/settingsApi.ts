@@ -19,3 +19,13 @@ export async function saveSettings(payload: {
   });
   if (!res.ok) throw new Error(`保存设置失败: ${res.status}`);
 }
+
+export async function getProxyModels(): Promise<string[]> {
+  const res = await fetch(`${BASE}/api/proxy-models`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({})) as { error?: string };
+    throw new Error(body.error ?? `获取模型列表失败: ${res.status}`);
+  }
+  const data = await res.json() as { data?: { id: string }[] };
+  return (data.data ?? []).map((m) => m.id).filter(Boolean);
+}
