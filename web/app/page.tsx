@@ -22,6 +22,7 @@ import StreamingCard from "@/components/StreamingCard";
 import SettingsModal from "@/components/SettingsModal";
 import { startRun, openEventStream, submitGate, refreshFolderTree, getRunDetail } from "@/lib/api";
 import { getSettings } from "@/lib/settingsApi";
+import { renderMarkdown } from "@/lib/markdown";
 import type { PipelineEvent, GateEvent, HistoryItem, StepStat } from "@/lib/types";
 
 type Status = "idle" | "running" | "done" | "error";
@@ -451,9 +452,9 @@ export default function Home() {
                   return (
                     <div key={i} className="border border-amber-200 rounded-xl bg-amber-50 p-4">
                       <p className="text-xs text-amber-700 font-semibold mb-2">⚠ 审核意见（内容生成将重跑）</p>
-                      <pre className="text-sm text-amber-800 whitespace-pre-wrap leading-relaxed max-h-48 overflow-y-auto font-sans">
-                        {e.content}
-                      </pre>
+                      <div className="text-amber-800 max-h-48 overflow-y-auto space-y-0.5">
+                        {renderMarkdown(e.content)}
+                      </div>
                     </div>
                   );
                 }

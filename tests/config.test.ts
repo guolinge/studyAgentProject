@@ -42,7 +42,7 @@ describe("resolveAgentConfig", () => {
 describe("loadConfig", () => {
   it("loads and validates the real agents.config.json from project root", () => {
     const cfg = loadConfig();
-    expect(cfg.defaults.model).toBe("claude-sonnet-4-6");
+    expect(cfg.defaults.model).toBe("qwen-max-latest");
     expect(Object.keys(cfg.agents)).toContain("contentGeneration");
   });
 });

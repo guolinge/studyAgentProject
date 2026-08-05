@@ -35,19 +35,14 @@ interface GateRow {
 type SidebarRow = Row | ErrorRow | GateRow;
 
 function buildSidebarRows(events: PipelineEvent[]): SidebarRow[] {
-  const stepMap = new Map<string, StepStatus>();
   const rows: SidebarRow[] = [];
 
   for (const e of events) {
     if (e.type === "step_start") {
-      if (!stepMap.has(e.label)) {
-        stepMap.set(e.label, "running");
-        rows.push({ kind: "step", label: e.label, status: "running" });
-      }
+      rows.push({ kind: "step", label: e.label, status: "running" });
     } else if (e.type === "progress") {
-      stepMap.set(e.label, "done");
-      const row = rows.find((r): r is Row => r.kind === "step" && r.label === e.label);
-      if (row) row.status = "done";
+      const idx = rows.findLastIndex((r): r is Row => r.kind === "step" && r.label === e.label && r.status === "running");
+      if (idx >= 0) (rows[idx] as Row).status = "done";
       else rows.push({ kind: "step", label: e.label, status: "done" });
     } else if (e.type === "step_error") {
       rows.push({ kind: "step_error", label: e.label, message: e.message });

@@ -3,56 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { GateEvent } from "@/lib/types";
-
-// 把行内 **bold** / `code` 转成 JSX span
-function renderInline(text: string, key: string | number) {
-  const parts: React.ReactNode[] = [];
-  let rest = text;
-  let idx = 0;
-  while (rest.length > 0) {
-    const bold = rest.match(/\*\*(.+?)\*\*/);
-    const code = rest.match(/`([^`]+)`/);
-    const first = [bold, code]
-      .filter(Boolean)
-      .sort((a, b) => (a!.index ?? 0) - (b!.index ?? 0))[0];
-    if (!first) { parts.push(<span key={`${key}-${idx}`}>{rest}</span>); break; }
-    if (first.index! > 0) parts.push(<span key={`${key}-${idx++}`}>{rest.slice(0, first.index)}</span>);
-    if (first === bold)
-      parts.push(<strong key={`${key}-${idx++}`} className="font-semibold text-gray-900">{first[1]}</strong>);
-    else
-      parts.push(<code key={`${key}-${idx++}`} className="bg-gray-100 text-gray-800 px-1 py-0.5 rounded text-xs font-mono">{first[1]}</code>);
-    rest = rest.slice(first.index! + first[0].length);
-  }
-  return parts;
-}
-
-function renderMarkdown(text: string) {
-  const lines = text.split("\n");
-  const nodes: React.ReactNode[] = [];
-  let i = 0;
-  while (i < lines.length) {
-    const line = lines[i];
-    const h1 = line.match(/^# (.+)/);
-    const h2 = line.match(/^## (.+)/);
-    const h3 = line.match(/^### (.+)/);
-    const li = line.match(/^[-*]\s(.+)/);
-    const hr = /^---+$/.test(line.trim());
-    if (h1)      nodes.push(<h1 key={i} className="text-base font-bold text-gray-900 mt-4 mb-1.5 first:mt-0 border-b border-gray-100 pb-1">{renderInline(h1[1], i)}</h1>);
-    else if (h2) nodes.push(<h2 key={i} className="text-sm font-semibold text-gray-800 mt-3 mb-1">{renderInline(h2[1], i)}</h2>);
-    else if (h3) nodes.push(<h3 key={i} className="text-sm font-medium text-gray-700 mt-2 mb-0.5">{renderInline(h3[1], i)}</h3>);
-    else if (li) nodes.push(
-      <div key={i} className="flex items-start gap-1.5 text-sm text-gray-700 leading-relaxed ml-2">
-        <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-gray-400 flex-shrink-0" />
-        <span>{renderInline(li[1], i)}</span>
-      </div>
-    );
-    else if (hr) nodes.push(<hr key={i} className="border-gray-200 my-2" />);
-    else if (!line.trim()) nodes.push(<div key={i} className="h-2" />);
-    else nodes.push(<p key={i} className="text-sm text-gray-700 leading-relaxed">{renderInline(line, i)}</p>);
-    i++;
-  }
-  return nodes;
-}
+import { renderMarkdown } from "@/lib/markdown";
 
 // 全屏弹窗（挂载到 body 避免层叠上下文问题）
 function FullscreenModal({
@@ -205,7 +156,7 @@ export default function GateViewer({ event, onSubmit, readOnly = false }: Props)
           <div className="flex gap-2 px-4 py-3 bg-gray-50 border-t border-gray-100">
             <textarea
               ref={inputRef}
-              rows={1}
+              rows={3}
               placeholder="直接回车通过，或输入修改意见…"
               className="flex-1 bg-white border border-gray-300 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 rounded-lg text-sm text-gray-800 placeholder-gray-400 px-3 py-2 outline-none resize-none transition-all"
               onChange={(e) => setInputVal(e.target.value)}
