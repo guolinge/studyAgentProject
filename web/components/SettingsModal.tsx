@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { getSettings, saveSettings, getProxyModels, type ProxyModelEntry } from "@/lib/settingsApi";
 import type {
   AppSettings, AgentConfig, AgentDefaults, AgentOverride,
@@ -71,6 +71,164 @@ function Field({ label, hint, children }: {
   );
 }
 
+function ModelPicker({ value, options, required, onChange }: {
+  value: string;
+  options: ModelOption[];
+  required: boolean;
+  onChange: (v: string) => void;
+}) {
+  const [open, setOpen]         = useState(false);
+  const [query, setQuery]       = useState("");
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const wrapRef  = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const grouped = useMemo(() => {
+    const q = query.toLowerCase();
+    const filtered = q
+      ? options.filter((m) => m.label.toLowerCase().includes(q) || m.id.toLowerCase().includes(q))
+      : options;
+    return filtered.reduce<Record<string, ModelOption[]>>((acc, m) => {
+      (acc[m.provider] ??= []).push(m);
+      return acc;
+    }, {});
+  }, [options, query]);
+
+  // 打开时默认展开包含当前值的 provider
+  const openPicker = () => {
+    if (open) { setOpen(false); return; }
+    const current = options.find((m) => m.id === value);
+    setExpanded(current ? new Set([current.provider]) : new Set());
+    setQuery("");
+    setOpen(true);
+    setTimeout(() => inputRef.current?.focus(), 0);
+  };
+
+  // 外部点击关闭
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  const toggle = (provider: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      next.has(provider) ? next.delete(provider) : next.add(provider);
+      return next;
+    });
+
+  const select = (id: string) => { onChange(id); setOpen(false); };
+
+  const selected = options.find((m) => m.id === value);
+  const displayLabel = selected
+    ? selected.label
+    : value || (required ? "选择模型…" : "— 同默认 —");
+
+  const providers = Object.keys(grouped);
+
+  return (
+    <div ref={wrapRef} className="relative min-w-0">
+      {/* trigger */}
+      <button
+        type="button"
+        onClick={openPicker}
+        className={
+          "w-full flex items-center justify-between gap-1 border rounded-md px-2 py-1.5 text-xs " +
+          "bg-white outline-none transition-colors " +
+          (open
+            ? "border-[rgb(var(--accent-400))] ring-1 ring-[rgb(var(--accent-50))] text-gray-800"
+            : "border-gray-200 text-gray-700 hover:border-gray-300")
+        }
+      >
+        <span className="truncate">{displayLabel}</span>
+        <svg className={`shrink-0 w-3 h-3 text-gray-400 transition-transform ${open ? "rotate-180" : ""}`}
+          viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.8">
+          <path d="M2 4l4 4 4-4"/>
+        </svg>
+      </button>
+
+      {/* dropdown panel */}
+      {open && (
+        <div className="absolute z-50 top-full mt-1 left-0 w-64 bg-white border border-gray-200 rounded-xl shadow-xl overflow-hidden">
+          {/* search */}
+          <div className="px-2 pt-2 pb-1 border-b border-gray-100">
+            <input
+              ref={inputRef}
+              type="text"
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setExpanded(new Set(Object.keys(grouped)));
+              }}
+              placeholder="搜索模型…"
+              className="w-full text-xs px-2 py-1.5 rounded-lg border border-gray-200 outline-none focus:border-[rgb(var(--accent-400))] bg-gray-50 placeholder-gray-400"
+            />
+          </div>
+
+          {/* 同默认 */}
+          {!required && (
+            <button
+              type="button"
+              onClick={() => select("")}
+              className={
+                "w-full text-left px-3 py-1.5 text-xs border-b border-gray-100 " +
+                (!value ? "bg-[rgb(var(--accent-50))] text-[rgb(var(--accent-500))] font-medium" : "text-gray-500 hover:bg-gray-50")
+              }
+            >
+              — 同默认 —
+            </button>
+          )}
+
+          {/* provider groups */}
+          <div className="overflow-y-auto max-h-64">
+            {providers.length === 0 && (
+              <p className="text-xs text-gray-400 text-center py-4">无匹配</p>
+            )}
+            {providers.map((provider) => (
+              <div key={provider}>
+                <button
+                  type="button"
+                  onClick={() => toggle(provider)}
+                  className="w-full flex items-center justify-between px-3 py-1.5 bg-gray-50 hover:bg-gray-100 transition-colors"
+                >
+                  <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">{provider}</span>
+                  <span className="text-gray-400 text-[10px]">
+                    {expanded.has(provider) ? "▴" : "▾"} {grouped[provider].length}
+                  </span>
+                </button>
+                {expanded.has(provider) && grouped[provider].map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => select(m.id)}
+                    className={
+                      "w-full text-left px-4 py-1.5 text-xs transition-colors flex items-center gap-2 " +
+                      (value === m.id
+                        ? "bg-[rgb(var(--accent-50))] text-[rgb(var(--accent-500))] font-medium"
+                        : "text-gray-700 hover:bg-gray-50")
+                    }
+                  >
+                    {value === m.id && (
+                      <svg className="shrink-0 w-3 h-3 text-[rgb(var(--accent-400))]" viewBox="0 0 12 12" fill="currentColor">
+                        <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="1.8" fill="none" strokeLinecap="round"/>
+                      </svg>
+                    )}
+                    <span className={value === m.id ? "" : "pl-5"}>{m.label}</span>
+                  </button>
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AgentRow({
   label, model, effort, maxTokens, thinking, required, modelOptions,
   onModel, onEffort, onMaxTokens, onThinking,
@@ -84,31 +242,11 @@ function AgentRow({
   const cell =
     "border border-gray-200 rounded-md px-2 py-1.5 text-xs text-gray-700 outline-none bg-white " +
     "focus:border-[rgb(var(--accent-400))]";
+  const opts = modelOptions ?? MODEL_OPTIONS;
   return (
     <div className="grid grid-cols-[96px_1fr_110px_72px_96px] gap-2 items-center py-1">
       <span className="text-xs text-gray-600 font-medium truncate">{label}</span>
-      {(() => {
-        const opts = modelOptions ?? MODEL_OPTIONS;
-        const grouped = opts.reduce<Record<string, ModelOption[]>>((acc, m) => {
-          (acc[m.provider] ??= []).push(m);
-          return acc;
-        }, {});
-        return (
-          <select value={model} onChange={(e) => onModel(e.target.value)} className={cell}>
-            {!required && <option value="">— 同默认 —</option>}
-            {model && !opts.find((m) => m.id === model) && (
-              <option value={model}>{model}</option>
-            )}
-            {Object.entries(grouped).map(([provider, models]) => (
-              <optgroup key={provider} label={provider}>
-                {models.map((m) => (
-                  <option key={m.id} value={m.id}>{m.label}</option>
-                ))}
-              </optgroup>
-            ))}
-          </select>
-        );
-      })()}
+      <ModelPicker value={model} options={opts} required={required} onChange={onModel} />
       <select value={effort} onChange={(e) => onEffort(e.target.value)} className={cell}>
         {!required && <option value="">同默认</option>}
         {EFFORT_OPTIONS.map((v) => <option key={v} value={v}>{v}</option>)}
