@@ -14,7 +14,8 @@
  *   LARK_DRY_RUN=1        不写飞书,打印 Markdown
  *   NO_SEARCH=1           跳过联网搜索
  *   NO_DEDUP=1            跳过查重去重
- *   NO_DIAGRAM=1          跳过 SVG 配图
+ *   NO_DIAGRAM=1          跳过配图
+ *   SVG_DIAGRAM=1         用 SVG 画图(默认字符画图)
  *   NO_DISTILLER=1        跳过蒸馏器
  *   GATE_AUTOPASS=1       所有门自动通过(自动化测试用)
  *   DEDUP_CHOICE=N        配合 GATE_AUTOPASS,查重门自动选第 N 篇合并
@@ -42,7 +43,7 @@ import type { PlacementInfo } from "./orchestrator.js";
 import { tavilySearch, tavilyExtract, formatSearchContext } from "./tools/tavily.js";
 import { runPipeline } from "./orchestrator.js";
 import { createReadlineAsker } from "./io.js";
-import { renderDiagrams, patchDiagrams } from "./diagrams.js";
+import { renderDiagrams, patchDiagrams, type DiagramMode } from "./diagrams.js";
 import { mergeIntoDoc } from "./merge.js";
 import { runDistiller, applyChange, formatChangesForApproval } from "./distiller.js";
 import type { AgentInput, AgentRole, ResolvedAgentConfig } from "./types.js";
@@ -88,6 +89,7 @@ async function main() {
   const dryRun = process.env.LARK_DRY_RUN === "1";
   const noDiagram = process.env.NO_DIAGRAM === "1";
   const noDistiller = process.env.NO_DISTILLER === "1";
+  const diagramMode: DiagramMode = process.env.SVG_DIAGRAM === "1" ? "svg" : "ascii";
 
   // 调试省 token:MODEL_OVERRIDE / EFFORT_OVERRIDE 覆盖所有 agent(不改正式 config)
   const modelOverride = process.env.MODEL_OVERRIDE;
@@ -176,6 +178,7 @@ async function main() {
               await patchDiagrams(r.incrementalMarkdown, r.url, {
                 loadPrompt,
                 runRole,
+                mode: diagramMode,
                 updateDoc: (u, p, c) => larkUpdateStrReplace(u, p, c),
                 onProgress: (m) => console.error(m),
               });
@@ -227,7 +230,7 @@ async function main() {
        */
       publish: async (markdown, placement: PlacementInfo) => {
         if (dryRun) {
-          const md = noDiagram ? markdown : await renderDiagrams(markdown, { loadPrompt, runRole });
+          const md = noDiagram ? markdown : await renderDiagrams(markdown, { loadPrompt, runRole, mode: diagramMode });
           console.error("\n(dry-run)跳过飞书写入,打印将导入的内容:\n");
           console.log(md);
           return "(dry-run:未写入飞书)";
@@ -250,6 +253,7 @@ async function main() {
           const { total, patched } = await patchDiagrams(markdown, url, {
             loadPrompt,
             runRole,
+            mode: diagramMode,
             updateDoc: (u, p, c) => larkUpdateStrReplace(u, p, c),
             onProgress: (m) => console.error(m),
           });
@@ -288,6 +292,7 @@ async function main() {
               await patchDiagrams(markdown, url, {
                 loadPrompt,
                 runRole,
+                mode: diagramMode,
                 updateDoc: (u, p, c) => larkUpdateStrReplace(u, p, c),
                 onProgress: (m) => console.error(m),
               });
