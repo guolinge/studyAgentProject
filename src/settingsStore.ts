@@ -11,6 +11,7 @@ export const AppSettingsSchema = z.object({
   theme:                 z.enum(ThemeValues).default("indigo"),
   gate1Enabled:          z.boolean().default(true),
   maxReviewRetries:      z.number().int().min(0).max(5).default(2),
+  svgDiagram:            z.boolean().default(false),
 });
 
 export type AppSettings = z.infer<typeof AppSettingsSchema>;

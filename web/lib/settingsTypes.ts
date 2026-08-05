@@ -10,6 +10,7 @@ export interface AppSettings {
   theme:                 ThemeValue;
   gate1Enabled:          boolean;
   maxReviewRetries:      number;
+  svgDiagram:            boolean;
 }
 
 export interface AgentDefaults {

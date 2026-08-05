@@ -41,4 +41,14 @@ describe("settingsStore", () => {
   it("非法值抛出异常", () => {
     expect(() => saveSettings({ theme: "purple" as never }, p)).toThrow();
   });
+
+  it("svgDiagram 默认 false（默认字符画图）", () => {
+    const s = loadSettings(p);
+    expect(s.svgDiagram).toBe(false);
+  });
+
+  it("可开启 svgDiagram 并持久化", () => {
+    saveSettings({ svgDiagram: true }, p);
+    expect(loadSettings(p).svgDiagram).toBe(true);
+  });
 });
