@@ -20,7 +20,17 @@ import type { AgentInput, ResolvedAgentConfig } from "./types.js";
  */
 export interface ModelClient {
   createMessage(params: Record<string, unknown>): Promise<{
-    content: Array<{ type: string; text?: string }>;
+    content: Array<{
+      type: string;
+      text?: string;
+      // tool_use 块字段(runAgent 忽略,runAgentWithTools 使用)
+      id?: string;
+      name?: string;
+      input?: unknown;
+      // thinking 块字段(仅用于原样回放)
+      thinking?: string;
+    }>;
+    stop_reason?: string | null;
   }>;
 }
 
@@ -60,4 +70,81 @@ export async function runAgent(
     .filter((b) => b.type === "text" && typeof b.text === "string")
     .map((b) => b.text as string)
     .join("");
+}
+
+/** 工具定义(Anthropic tools 参数的单项) */
+export interface ToolDef {
+  name: string;
+  description: string;
+  input_schema: object;
+}
+
+/** 工具执行器:按名字执行,返回给模型的文本结果 */
+export type ToolExecutor = (name: string, input: unknown) => Promise<string>;
+
+/**
+ * 带工具的 agent 循环。
+ *
+ * 流程:
+ *   1. 带 tools 调模型
+ *   2. stop_reason==="tool_use" → 执行每个 tool_use,把结果作为 tool_result 回传,继续
+ *   3. 否则 → 拼接 text 块返回
+ *
+ * 上限保护:最多 maxRounds 轮带工具的调用;到达上限后再做一次"不带 tools"的调用,
+ * 强制模型给出文字结论,避免无限循环。
+ *
+ * thinking 回放:把模型返回的完整 content(含 thinking / tool_use 块)原样 push 回
+ * messages,满足 adaptive thinking + tool use 的回放要求。
+ */
+export async function runAgentWithTools(
+  input: AgentInput,
+  cfg: ResolvedAgentConfig,
+  client: ModelClient,
+  tools: ToolDef[],
+  execute: ToolExecutor,
+  maxRounds = 6,
+): Promise<string> {
+  const messages: Array<{ role: string; content: unknown }> = [
+    { role: "user", content: input.user },
+  ];
+
+  for (let round = 0; round <= maxRounds; round++) {
+    const params: Record<string, unknown> = {
+      model: cfg.model,
+      max_tokens: cfg.maxTokens,
+      system: input.system,
+      output_config: { effort: cfg.effort },
+      messages,
+    };
+    if (cfg.thinking === "adaptive") params.thinking = { type: "adaptive" };
+    // 最后一轮不带 tools,强制文字结论
+    if (round < maxRounds) params.tools = tools;
+
+    const resp = await client.createMessage(params);
+    const toolUses = resp.content.filter((b) => b.type === "tool_use");
+
+    if (resp.stop_reason !== "tool_use" || toolUses.length === 0) {
+      return resp.content
+        .filter((b) => b.type === "text" && typeof b.text === "string")
+        .map((b) => b.text as string)
+        .join("");
+    }
+
+    // 回放完整 assistant 内容(保留 thinking 块)
+    messages.push({ role: "assistant", content: resp.content });
+
+    const results = [];
+    for (const tu of toolUses) {
+      let out: string;
+      try {
+        out = await execute(tu.name as string, tu.input);
+      } catch (e) {
+        out = `工具执行失败：${(e as Error).message}`;
+      }
+      results.push({ type: "tool_result", tool_use_id: tu.id, content: out });
+    }
+    messages.push({ role: "user", content: results });
+  }
+
+  return "";
 }
