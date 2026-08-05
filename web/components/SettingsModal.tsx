@@ -77,34 +77,38 @@ function ModelPicker({ value, options, required, onChange }: {
   required: boolean;
   onChange: (v: string) => void;
 }) {
-  const [open, setOpen]         = useState(false);
-  const [query, setQuery]       = useState("");
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [open, setOpen]                   = useState(false);
+  const [activeProvider, setActiveProvider] = useState<string | null>(null);
+  const [query, setQuery]                 = useState("");
   const wrapRef  = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const grouped = useMemo(() => {
-    const q = query.toLowerCase();
-    const filtered = q
-      ? options.filter((m) => m.label.toLowerCase().includes(q) || m.id.toLowerCase().includes(q))
-      : options;
-    return filtered.reduce<Record<string, ModelOption[]>>((acc, m) => {
+  const grouped = useMemo(
+    () => options.reduce<Record<string, ModelOption[]>>((acc, m) => {
       (acc[m.provider] ??= []).push(m);
       return acc;
-    }, {});
-  }, [options, query]);
+    }, {}),
+    [options],
+  );
 
-  // 打开时默认展开包含当前值的 provider
+  const providers = useMemo(() => Object.keys(grouped), [grouped]);
+
+  const filteredModels = useMemo(() => {
+    const list = activeProvider ? (grouped[activeProvider] ?? []) : [];
+    if (!query) return list;
+    const q = query.toLowerCase();
+    return list.filter((m) => m.label.toLowerCase().includes(q) || m.id.toLowerCase().includes(q));
+  }, [activeProvider, grouped, query]);
+
   const openPicker = () => {
     if (open) { setOpen(false); return; }
     const current = options.find((m) => m.id === value);
-    setExpanded(current ? new Set([current.provider]) : new Set());
+    setActiveProvider(current?.provider ?? providers[0] ?? null);
     setQuery("");
     setOpen(true);
     setTimeout(() => inputRef.current?.focus(), 0);
   };
 
-  // 外部点击关闭
   useEffect(() => {
     if (!open) return;
     const handler = (e: MouseEvent) => {
@@ -114,13 +118,6 @@ function ModelPicker({ value, options, required, onChange }: {
     return () => document.removeEventListener("mousedown", handler);
   }, [open]);
 
-  const toggle = (provider: string) =>
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      next.has(provider) ? next.delete(provider) : next.add(provider);
-      return next;
-    });
-
   const select = (id: string) => { onChange(id); setOpen(false); };
 
   const selected = options.find((m) => m.id === value);
@@ -128,11 +125,9 @@ function ModelPicker({ value, options, required, onChange }: {
     ? selected.label
     : value || (required ? "选择模型…" : "— 同默认 —");
 
-  const providers = Object.keys(grouped);
-
   return (
     <div ref={wrapRef} className="relative min-w-0">
-      {/* trigger */}
+      {/* 触发按钮 */}
       <button
         type="button"
         onClick={openPicker}
@@ -151,77 +146,99 @@ function ModelPicker({ value, options, required, onChange }: {
         </svg>
       </button>
 
-      {/* dropdown panel */}
+      {/* 级联面板：左列 provider，右列 models */}
       {open && (
-        <div className="absolute z-50 top-full mt-1 left-0 w-64 bg-white border border-gray-200 rounded-xl shadow-xl overflow-hidden">
-          {/* search */}
-          <div className="px-2 pt-2 pb-1 border-b border-gray-100">
-            <input
-              ref={inputRef}
-              type="text"
-              value={query}
-              onChange={(e) => {
-                setQuery(e.target.value);
-                setExpanded(new Set(Object.keys(grouped)));
-              }}
-              placeholder="搜索模型…"
-              className="w-full text-xs px-2 py-1.5 rounded-lg border border-gray-200 outline-none focus:border-[rgb(var(--accent-400))] bg-gray-50 placeholder-gray-400"
-            />
-          </div>
+        <div className="absolute z-50 top-full mt-1 left-0 flex bg-white border border-gray-200 rounded-xl shadow-xl overflow-hidden"
+          style={{ minWidth: "320px" }}>
 
-          {/* 同默认 */}
-          {!required && (
-            <button
-              type="button"
-              onClick={() => select("")}
-              className={
-                "w-full text-left px-3 py-1.5 text-xs border-b border-gray-100 " +
-                (!value ? "bg-[rgb(var(--accent-50))] text-[rgb(var(--accent-500))] font-medium" : "text-gray-500 hover:bg-gray-50")
-              }
-            >
-              — 同默认 —
-            </button>
-          )}
-
-          {/* provider groups */}
-          <div className="overflow-y-auto max-h-64">
-            {providers.length === 0 && (
-              <p className="text-xs text-gray-400 text-center py-4">无匹配</p>
+          {/* 左列：provider 列表 */}
+          <div className="w-32 shrink-0 border-r border-gray-100 overflow-y-auto max-h-72 py-1">
+            {!required && (
+              <button
+                type="button"
+                onClick={() => select("")}
+                className={
+                  "w-full text-left px-3 py-2 text-xs border-b border-gray-100 mb-1 " +
+                  (!value ? "text-[rgb(var(--accent-500))] font-medium bg-[rgb(var(--accent-50))]" : "text-gray-400 hover:bg-gray-50")
+                }
+              >
+                同默认
+              </button>
             )}
-            {providers.map((provider) => (
-              <div key={provider}>
+            {providers.map((provider) => {
+              const isActive = provider === activeProvider;
+              const hasSelected = grouped[provider].some((m) => m.id === value);
+              return (
                 <button
+                  key={provider}
                   type="button"
-                  onClick={() => toggle(provider)}
-                  className="w-full flex items-center justify-between px-3 py-1.5 bg-gray-50 hover:bg-gray-100 transition-colors"
+                  onMouseEnter={() => { setActiveProvider(provider); setQuery(""); }}
+                  onClick={() => setActiveProvider(provider)}
+                  className={
+                    "w-full text-left px-3 py-2 text-xs flex items-center justify-between transition-colors " +
+                    (isActive
+                      ? "bg-[rgb(var(--accent-50))] text-[rgb(var(--accent-500))]"
+                      : "text-gray-700 hover:bg-gray-50")
+                  }
                 >
-                  <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">{provider}</span>
-                  <span className="text-gray-400 text-[10px]">
-                    {expanded.has(provider) ? "▴" : "▾"} {grouped[provider].length}
+                  <span className="truncate font-medium">{provider}</span>
+                  <span className="flex items-center gap-1 shrink-0">
+                    {hasSelected && (
+                      <span className="w-1.5 h-1.5 rounded-full bg-[rgb(var(--accent-400))]" />
+                    )}
+                    <svg className="w-3 h-3 text-gray-300" viewBox="0 0 12 12" fill="none"
+                      stroke="currentColor" strokeWidth="1.5">
+                      <path d="M4 3l3 3-3 3"/>
+                    </svg>
                   </span>
                 </button>
-                {expanded.has(provider) && grouped[provider].map((m) => (
-                  <button
-                    key={m.id}
-                    type="button"
-                    onClick={() => select(m.id)}
-                    className={
-                      "w-full text-left px-4 py-1.5 text-xs transition-colors flex items-center gap-2 " +
-                      (value === m.id
-                        ? "bg-[rgb(var(--accent-50))] text-[rgb(var(--accent-500))] font-medium"
-                        : "text-gray-700 hover:bg-gray-50")
-                    }
-                  >
-                    {value === m.id && (
-                      <svg className="shrink-0 w-3 h-3 text-[rgb(var(--accent-400))]" viewBox="0 0 12 12" fill="currentColor">
-                        <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="1.8" fill="none" strokeLinecap="round"/>
-                      </svg>
-                    )}
-                    <span className={value === m.id ? "" : "pl-5"}>{m.label}</span>
-                  </button>
-                ))}
-              </div>
-            ))}
+              );
+            })}
+          </div>
+
+          {/* 右列：模型列表 */}
+          <div className="flex flex-col flex-1 min-w-0">
+            {/* 搜索框 */}
+            <div className="px-2 pt-2 pb-1.5 border-b border-gray-100">
+              <input
+                ref={inputRef}
+                type="text"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="搜索模型…"
+                className="w-full text-xs px-2 py-1.5 rounded-lg border border-gray-200 outline-none focus:border-[rgb(var(--accent-400))] bg-gray-50 placeholder-gray-400"
+              />
+            </div>
+            <div className="overflow-y-auto max-h-60 py-1">
+              {filteredModels.length === 0 && (
+                <p className="text-xs text-gray-400 text-center py-6">
+                  {query ? "无匹配结果" : "暂无模型"}
+                </p>
+              )}
+              {filteredModels.map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => select(m.id)}
+                  className={
+                    "w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 transition-colors " +
+                    (value === m.id
+                      ? "bg-[rgb(var(--accent-50))] text-[rgb(var(--accent-500))] font-medium"
+                      : "text-gray-700 hover:bg-gray-50")
+                  }
+                >
+                  {value === m.id ? (
+                    <svg className="shrink-0 w-3 h-3 text-[rgb(var(--accent-400))]" viewBox="0 0 12 12"
+                      fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+                      <path d="M2 6l3 3 5-5"/>
+                    </svg>
+                  ) : (
+                    <span className="shrink-0 w-3 h-3" />
+                  )}
+                  <span>{m.label}</span>
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       )}
