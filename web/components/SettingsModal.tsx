@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { getSettings, saveSettings, getProxyModels } from "@/lib/settingsApi";
+import { getSettings, saveSettings, getProxyModels, type ProxyModelEntry } from "@/lib/settingsApi";
 import type {
   AppSettings, AgentConfig, AgentDefaults, AgentOverride,
   EffortValue, ThinkingValue, ModelOption,
@@ -14,26 +14,29 @@ const PROVIDER_LABELS: Record<string, string> = {
   aws: "AWS", azure: "Azure", google: "Google",
   volcengine: "火山引擎", dashscope: "DashScope",
   private: "私有部署", huggingface: "HuggingFace",
+  openai: "OpenAI", anthropic: "Anthropic", deepseek: "DeepSeek",
 };
 
-function buildOptions(proxyIds: string[]): ModelOption[] {
+function buildOptions(entries: ProxyModelEntry[]): ModelOption[] {
   const knownById = new Map(MODEL_OPTIONS.map((m) => [m.id, m]));
   const result: ModelOption[] = [];
   const added = new Set<string>();
-  for (const id of proxyIds) {
+  for (const { id, provider: rawProvider } of entries) {
     if (added.has(id)) continue;
     added.add(id);
-    result.push(
-      knownById.get(id) ?? (() => {
-        const slash = id.indexOf("/");
-        const rawPfx = slash > 0 ? id.slice(0, slash) : "";
-        return {
-          id,
-          label: slash > 0 ? id.slice(slash + 1) : id,
-          provider: PROVIDER_LABELS[rawPfx] ?? (rawPfx || "其他"),
-        };
-      })()
-    );
+    if (knownById.has(id)) {
+      result.push(knownById.get(id)!);
+    } else {
+      const slash = id.indexOf("/");
+      const idPrefix = slash > 0 ? id.slice(0, slash) : "";
+      // 优先用 API 返回的 provider 字段，"system" 是占位值忽略掉
+      const providerKey = rawProvider && rawProvider !== "system" ? rawProvider : idPrefix;
+      result.push({
+        id,
+        label: slash > 0 ? id.slice(slash + 1) : id,
+        provider: PROVIDER_LABELS[providerKey] ?? (providerKey || "其他"),
+      });
+    }
   }
   for (const m of MODEL_OPTIONS) {
     if (!added.has(m.id)) result.push(m);
@@ -190,8 +193,8 @@ export default function SettingsModal({
     setModelsLoading(true);
     setModelsError(null);
     try {
-      const ids = await getProxyModels();
-      setProxyModels(buildOptions(ids));
+      const entries = await getProxyModels();
+      setProxyModels(buildOptions(entries));
     } catch (e) {
       setModelsError((e as Error).message);
     } finally {
