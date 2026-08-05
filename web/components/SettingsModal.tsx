@@ -520,6 +520,25 @@ export default function SettingsModal({
                       })}
                     </div>
                   </div>
+                  {/* 价格参考链接 */}
+                  <div className="pt-1 border-t border-gray-100 flex items-center justify-end gap-4">
+                    <a
+                      href="https://llm-proxy.futuoa.com/doc"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-xs text-gray-400 hover:text-[rgb(var(--accent-500))] transition-colors"
+                    >
+                      代理网关文档 ↗
+                    </a>
+                    <a
+                      href="https://ai.futuoa.com/api/ai-auth/model-registry/list"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-xs text-gray-400 hover:text-[rgb(var(--accent-500))] transition-colors"
+                    >
+                      模型价格参考 ↗
+                    </a>
+                  </div>
                 </div>
               )}
 
