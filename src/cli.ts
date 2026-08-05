@@ -27,7 +27,7 @@ import "dotenv/config";
 import Anthropic from "@anthropic-ai/sdk";
 import { loadConfig, resolveAgentConfig } from "./config.js";
 import { loadPrompt } from "./prompts.js";
-import { runAgent, type ModelClient } from "./agentRunner.js";
+import { runAgent, runAgentWithTools, type ModelClient, type ToolDef, type ToolExecutor } from "./agentRunner.js";
 import {
   larkCreateDoc,
   larkCreateFolder,
@@ -39,7 +39,7 @@ import {
   type SearchHit,
 } from "./tools/lark.js";
 import type { PlacementInfo } from "./orchestrator.js";
-import { tavilySearch, formatSearchContext } from "./tools/tavily.js";
+import { tavilySearch, tavilyExtract, formatSearchContext } from "./tools/tavily.js";
 import { runPipeline } from "./orchestrator.js";
 import { createReadlineAsker } from "./io.js";
 import { renderDiagrams, patchDiagrams } from "./diagrams.js";
@@ -51,6 +51,7 @@ import { execSync } from "node:child_process";
 // 角色名 → 中文标签(仅用于 console.error 进度输出)
 const ROLE_LABEL: Record<AgentRole, string> = {
   questionAnalysis: "问题分析",
+  searchResearch: "联网研究",
   contentOrganization: "内容组织",
   contentGeneration: "内容生成",
   contentReview: "内容审核",
@@ -92,32 +93,66 @@ async function main() {
   const modelOverride = process.env.MODEL_OVERRIDE;
   const effortOverride = process.env.EFFORT_OVERRIDE as ResolvedAgentConfig["effort"] | undefined;
 
+  // 联网搜索开关:没有配 BASE_URL 或设 NO_SEARCH=1 时禁用
+  const base = process.env.ANTHROPIC_BASE_URL || "";
+  const researchEnabled = process.env.NO_SEARCH !== "1" && !!base;
+
+  // 联网研究工具(searchResearch 角色用)
+  const SEARCH_TOOLS: ToolDef[] = [
+    {
+      name: "web_search",
+      description: "搜索网页，返回若干条标题、URL 和摘要（不含正文）。用它发现资料来源。",
+      input_schema: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "搜索查询词" },
+          max_results: { type: "integer", description: "返回条数，默认 5" },
+        },
+        required: ["query"],
+      },
+    },
+    {
+      name: "read_page",
+      description: "读取指定 URL 的网页正文全文。用它深读值得精读的来源。",
+      input_schema: {
+        type: "object",
+        properties: { url: { type: "string", description: "要读取的网页 URL" } },
+        required: ["url"],
+      },
+    },
+  ];
+
+  const searchExecutor: ToolExecutor = async (name, rawInput) => {
+    const args = (rawInput ?? {}) as { query?: string; url?: string; max_results?: number };
+    if (!base) return "联网不可用（未配置网关地址）";
+    const apiKey = process.env.ANTHROPIC_API_KEY ?? "";
+    if (name === "web_search") {
+      const r = await tavilySearch(args.query ?? "", { base, apiKey, maxResults: args.max_results ?? 5 });
+      return formatSearchContext(r);
+    }
+    if (name === "read_page") {
+      return await tavilyExtract(args.url ?? "", { base, apiKey });
+    }
+    return `未知工具：${name}`;
+  };
+
   /**
    * runRole:按角色取配置,应用可能的覆盖,打印进度后调用 runAgent。
+   * searchResearch 角色使用 runAgentWithTools 启用联网工具循环。
    * 所有 agent 都通过这个函数执行,方便统一切换 model/effort。
    */
   const runRole = (role: AgentRole, input: AgentInput) => {
-    const base = resolveAgentConfig(config, role);
+    const baseCfg = resolveAgentConfig(config, role);
     const cfg: ResolvedAgentConfig = {
-      ...base,
-      model: modelOverride || base.model,
-      effort: effortOverride || base.effort,
+      ...baseCfg,
+      model: modelOverride || baseCfg.model,
+      effort: effortOverride || baseCfg.effort,
     };
     console.error(`  → [${ROLE_LABEL[role]}] 运行中(model=${cfg.model}, effort=${cfg.effort})…`);
-    return runAgent(input, cfg, client);
+    return role === "searchResearch"
+      ? runAgentWithTools(input, cfg, client, SEARCH_TOOLS, searchExecutor)
+      : runAgent(input, cfg, client);
   };
-
-  // 联网搜索:走网关 Tavily 透明代理
-  // 没有配 BASE_URL 或设 NO_SEARCH=1 时跳过(search=undefined 则 orchestrator 不搜索)
-  const base = process.env.ANTHROPIC_BASE_URL || "";
-  const search =
-    process.env.NO_SEARCH === "1" || !base
-      ? undefined
-      : async (query: string) => {
-          console.error("  🔍 正在联网搜索…");
-          const r = await tavilySearch(query, { base, apiKey: process.env.ANTHROPIC_API_KEY ?? "" });
-          return formatSearchContext(r);
-        };
 
   // 查重去重合并:搜本人相关旧文档;选合并则把增量插进旧文
   // 没有配 BASE_URL 或设 NO_DEDUP=1 时跳过(dedup=undefined 则 orchestrator 不查重)
@@ -178,7 +213,7 @@ async function main() {
       loadPrompt,
       runRole,
       gate: asker,
-      search,
+      researchEnabled,
       dedup,
       updateIndex,
       /**
@@ -234,7 +269,7 @@ async function main() {
           loadPrompt,
           runRole,
           gate: asker,
-          search,
+          researchEnabled,
           dedup,
           updateIndex,
           // 用拆分时确认的归档位置覆盖子流水线的 publish
