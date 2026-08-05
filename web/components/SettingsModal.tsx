@@ -21,6 +21,7 @@ function buildOptions(proxyIds: string[]): ModelOption[] {
   const result: ModelOption[] = [];
   const added = new Set<string>();
   for (const id of proxyIds) {
+    if (added.has(id)) continue;
     added.add(id);
     result.push(
       knownById.get(id) ?? (() => {
