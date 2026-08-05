@@ -531,7 +531,7 @@ export default function SettingsModal({
                       代理网关文档 ↗
                     </a>
                     <a
-                      href="https://ai.futuoa.com/api/ai-auth/model-registry/list"
+                      href="https://ai.futuoa.com/dashboard/model-price"
                       target="_blank"
                       rel="noreferrer"
                       className="text-xs text-gray-400 hover:text-[rgb(var(--accent-500))] transition-colors"
@@ -618,6 +618,27 @@ export default function SettingsModal({
                     >
                       <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${
                         app.gate1Enabled ? "translate-x-5" : "translate-x-0"
+                      }`} />
+                    </button>
+                  </div>
+
+                  {/* SVG 画图开关 */}
+                  <div className="flex items-center justify-between py-1">
+                    <div>
+                      <p className="text-sm font-medium text-gray-700">SVG 画图</p>
+                      <p className="text-xs text-gray-400 mt-0.5">关闭时用字符图（更快更省 token）；开启后画飞书画板 SVG</p>
+                    </div>
+                    <button
+                      type="button"
+                      aria-label="SVG 画图开关"
+                      aria-pressed={app.svgDiagram}
+                      onClick={() => patchApp({ svgDiagram: !app.svgDiagram })}
+                      className={`relative w-11 h-6 rounded-full transition-colors focus:outline-none ${
+                        app.svgDiagram ? "bg-[rgb(var(--accent-500))]" : "bg-gray-300"
+                      }`}
+                    >
+                      <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${
+                        app.svgDiagram ? "translate-x-5" : "translate-x-0"
                       }`} />
                     </button>
                   </div>
