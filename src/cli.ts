@@ -48,6 +48,7 @@ import { mergeIntoDoc } from "./merge.js";
 import { runDistiller, applyChange, formatChangesForApproval } from "./distiller.js";
 import type { AgentInput, AgentRole, ResolvedAgentConfig } from "./types.js";
 import { execSync } from "node:child_process";
+import { writeFileSync } from "node:fs";
 
 // 角色名 → 中文标签(仅用于 console.error 进度输出)
 const ROLE_LABEL: Record<AgentRole, string> = {
@@ -212,6 +213,20 @@ async function main() {
         };
 
   try {
+    // publishBlank:创建空白大纲文档,供复制大纲流程调用
+    const publishBlank = async (title: string, placement: PlacementInfo) => {
+      let folderToken: string;
+      if (placement.type === "new") {
+        console.error(`  📁 新建文件夹「${placement.folderName}」…`);
+        folderToken = await larkCreateFolder(placement.folderName, placement.parentToken);
+      } else {
+        folderToken = placement.folderToken;
+      }
+      const url = await larkCreateDoc(`# ${title}`, "markdown", folderToken);
+      console.log("\n✅ 空白文档已建好:", url);
+      return url;
+    };
+
     const result = await runPipeline(userInput, {
       loadPrompt,
       runRole,
@@ -219,6 +234,7 @@ async function main() {
       researchEnabled,
       dedup,
       updateIndex,
+      publishBlank,
       /**
        * publish:流水线完成后把最终 Markdown 写入飞书。
        *
@@ -276,6 +292,7 @@ async function main() {
           researchEnabled,
           dedup,
           updateIndex,
+          publishBlank,
           // 用拆分时确认的归档位置覆盖子流水线的 publish
           publish: async (markdown) => {
             let folderToken: string;
@@ -304,6 +321,15 @@ async function main() {
           console.log(`✅ 「${topic.title}」:`, subResult.url);
         }
       }
+      return;
+    }
+
+    // 复制大纲结果处理
+    if (result.kind === "outline_copied") {
+      const bundlePath = "./outline-bundle.md";
+      writeFileSync(bundlePath, result.bundle, "utf8");
+      console.log(`\n📋 大纲 bundle 已写入 ${bundlePath}（粘贴到 AI 中台）`);
+      console.log(`📄 空白文档: ${result.url}`);
       return;
     }
 
