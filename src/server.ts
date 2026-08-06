@@ -81,7 +81,7 @@ const AGENTS_CONFIG_PATH = path.resolve(
 export interface StepStartEvent    { type: "step_start";      role: AgentRole; label: string }
 export interface ProgressEvent     { type: "progress";        role: AgentRole; label: string } // 环节完成 ✓
 export interface StepErrorEvent    { type: "step_error";      label: string; message: string }
-export interface GateEvent         { type: "gate";            title: string; content: string }
+export interface GateEvent         { type: "gate";            title: string; content: string; bundle?: string }
 export interface GateClosedEvent   { type: "gate_closed" }
 export interface DocCreatedEvent   { type: "doc_created";     url: string; folderName: string }
 export interface ReviewFeedbackEvent { type: "review_feedback"; content: string }
@@ -262,14 +262,14 @@ function buildDeps(runId: string) {
           await larkAppendToDoc(indexDocToken, row);
         };
 
-  const gate = async (title: string, content: string): Promise<string> => {
+  const gate = async (title: string, content: string, bundle?: string): Promise<string> => {
     // When gate1Enabled=false, gate 1 auto-passes
     if (!appSettings.gate1Enabled && title.startsWith("门1")) return "";
     return new Promise((resolve) => {
       const run = runs.get(runId);
       if (!run) { resolve(""); return; }
       run.gateResolver = resolve;
-      pushEvent(runId, { type: "gate", title, content });
+      pushEvent(runId, { type: "gate", title, content, bundle });
     });
   };
 
@@ -315,6 +315,24 @@ function buildDeps(runId: string) {
     return url;
   };
 
+  const publishBlank = async (title: string, placement: PlacementInfo): Promise<string> => {
+    if (dryRun) return `(dry-run) 空白文档「${title}」`;
+    let folderToken: string;
+    let folderName: string;
+    if (placement.type === "new") {
+      folderToken = await larkCreateFolder(placement.folderName, placement.parentToken);
+      folderName = placement.folderName;
+    } else {
+      folderToken = placement.folderToken;
+      folderName = placement.title;
+    }
+    const url = await larkCreateDoc(`# ${title}`, "markdown", folderToken);
+    pushEvent(runId, { type: "doc_created", url, folderName });
+    dbSetDocUrl(runId, url, folderName);
+    dbSetDocTitle(runId, title);
+    return url;
+  };
+
   const onReviewFeedback = (feedback: string) =>
     pushEvent(runId, { type: "review_feedback", content: feedback });
 
@@ -342,7 +360,7 @@ function buildDeps(runId: string) {
     return { url: docUrl, patched: result.patched, total: result.total };
   };
 
-  return { loadPrompt, runRole, gate, publish, researchEnabled, dedup, updateIndex, onReviewFeedback, patchDocDiagrams, reviewMaxRetries: appSettings.maxReviewRetries };
+  return { loadPrompt, runRole, gate, publish, publishBlank, researchEnabled, dedup, updateIndex, onReviewFeedback, patchDocDiagrams, reviewMaxRetries: appSettings.maxReviewRetries };
 }
 
 // ── Hono 应用 ─────────────────────────────────────────────────────────────────
