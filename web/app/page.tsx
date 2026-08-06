@@ -286,7 +286,13 @@ export default function Home() {
   // active gate for center column
   const activeGate = isViewMode ? null : getActiveGate(state.events);
   const displayGate: GateEvent | null = state.selectedGate
-    ? { type: "gate", title: state.selectedGate.title, content: state.selectedGate.content }
+    ? {
+        type: "gate",
+        title: state.selectedGate.title,
+        content: state.selectedGate.content,
+        // 选中的正是当前活跃门时，带上它的 bundle，保证「复制大纲」按钮不丢
+        bundle: activeGate?.title === state.selectedGate.title ? activeGate.bundle : undefined,
+      }
     : activeGate;
   // 只有选中的是「已关闭」的历史门时才只读；选中 active gate 仍可交互
   const gateReadOnly = state.selectedGate !== null && activeGate?.title !== state.selectedGate.title;
