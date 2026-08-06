@@ -157,7 +157,7 @@ export async function patchDiagrams(
     return renderDiagram(spec, context, deps).then((svg) => {
       if (!svg) {
         deps.onProgress?.(`  ⚠ 第 ${i + 1}/${specs.length} 张校验未过,保留文字占位:${spec.instruction}`);
-        deps.onError?.(spec.instruction, "SVG 校验超出重试次数");
+        deps.onError?.(spec.instruction, "校验超出重试次数");
         return;
       }
       // 追加到串行链末尾:等前一个 update 完成后再执行本次 update
