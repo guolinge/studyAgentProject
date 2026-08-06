@@ -18,7 +18,7 @@ import { stdin, stdout } from "node:process";
  * 一道门的函数签名:展示 title + content,返回用户输入的一行(已归一化)。
  * 返回 "" 表示"通过";非空字符串表示"修改意见",上游 agent 据此重跑。
  */
-export type Asker = (title: string, content: string) => Promise<string>;
+export type Asker = (title: string, content: string, bundle?: string) => Promise<string>;
 
 /**
  * 归一化门输入:去首尾空白。

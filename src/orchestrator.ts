@@ -22,6 +22,10 @@ import type { Asker } from "./io.js";
 import type { SearchHit } from "./tools/lark.js";
 import { parseDedupKeywords, searchDuplicates, formatDedupPrompt, parseGateChoice } from "./dedup.js";
 import { renderFolderTree, findByToken, folderTreeRoot } from "./folderTree.js";
+import { buildOutlineBundle } from "./outlineBundle.js";
+
+/** 门2「复制大纲」哨兵：gate 返回此值表示走 offload 分支 */
+export const COPY_OUTLINE_SIGNAL = "__COPY_OUTLINE__";
 
 /** 归档位置：现有文件夹 or 需要新建的文件夹 */
 export type PlacementInfo =
@@ -138,6 +142,8 @@ export interface PipelineDeps {
     merge: (userInput: string, target: SearchHit) => Promise<{ url: string; incrementalMarkdown: string }>;
   };
   updateIndex?: (title: string, url: string) => Promise<void>; // 每次 publish 后追加总索引一行
+  /** 门2「复制大纲」分支：建仅含标题的空白文档，返回 URL */
+  publishBlank?: (title: string, placement: PlacementInfo) => Promise<string>;
   onReviewFeedback?: (feedback: string) => void; // 内容审核 FAIL 时推送反馈内容（问题6）
   /** 在现有飞书文档上补画 SVG 配图（由 question-analysis 的 patch_diagrams 操作类型触发）*/
   patchDocDiagrams?: (docUrl: string) => Promise<{ url: string; patched: number; total: number }>;
@@ -151,7 +157,8 @@ export interface SplitDoc {
 
 export type PipelineResult =
   | { kind: "single"; url: string; markdown: string; skeleton: string; feedbacks: GateFeedback[] }
-  | { kind: "split"; topics: SplitDoc[] };
+  | { kind: "split"; topics: SplitDoc[] }
+  | { kind: "outline_copied"; url: string; bundle: string; feedbacks: GateFeedback[] };
 
 /**
  * 拼 system prompt:角色文件(+ 可选附上 style-rules)。
@@ -276,12 +283,36 @@ export async function runPipeline(userInput: string, deps: PipelineDeps): Promis
   // 工具函数:有研究备忘录时追加到 base 末尾;没有时原样返回
   const withSearch = (base: string) => (researchMemo ? `${base}\n\n${researchMemo}` : base);
 
-  // ② 内容组织 →门2(重):确认三级骨架(输入含问题分析产出 + 搜索结果)
+  // ② 内容组织 →门2(重)：确认三级骨架；门2 支持第三分支「复制大纲」offload
   const orgSystem = buildSystem(deps.loadPrompt, "content-organization", true);
   const orgUser = withSearch(`${userInput}\n\n【已确认的范围与意图】\n${outline1}`);
-  const skeleton = await iterateWithGate(
-    deps, "contentOrganization", "门2 · 确认骨架", orgSystem, orgUser, collect,
-  );
+  let skeleton = await deps.runRole("contentOrganization", { system: orgSystem, user: orgUser });
+  for (;;) {
+    const bundle = buildOutlineBundle({
+      question: userInput,
+      research: researchMemo,
+      skeleton,
+      generation: deps.loadPrompt("content-generation"),
+      styleRules: deps.loadPrompt("style-rules"),
+      drawingRules: deps.loadPrompt("drawing-rules-ascii"),
+    });
+    const reply = await deps.gate("门2 · 确认骨架", skeleton, bundle);
+    if (reply === "") break; // 通过，继续内容生成
+    if (reply === COPY_OUTLINE_SIGNAL || reply === "copy" || reply === "复制大纲") {
+      // offload 分支：建空白文档 + 入索引 + 结束（跳过内容生成/审核/画图）
+      if (!deps.publishBlank) throw new Error("publishBlank 未注入，无法执行复制大纲分支");
+      const url = await deps.publishBlank(placement.title, placement);
+      if (deps.updateIndex) {
+        try { await deps.updateIndex(placement.title, url); }
+        catch (e) { console.error(`  ⚠ 索引更新失败,跳过:${(e as Error).message}`); }
+      }
+      return { kind: "outline_copied", url, bundle, feedbacks };
+    }
+    // 修改意见：重跑内容组织（保持原门迭代语义）
+    collect({ gate: "门2 · 确认骨架", feedback: reply });
+    const user = `${orgUser}\n\n【上一版产出】\n${skeleton}\n\n【使用者修改意见】\n${reply}\n\n请据此修改后重新输出(保持同样的格式)。`;
+    skeleton = await deps.runRole("contentOrganization", { system: orgSystem, user });
+  }
 
   // ③ 内容生成(输入含骨架 + 搜索结果;maxTokens=32000 所以必须用 streaming)
   const genSystem = buildSystem(deps.loadPrompt, "content-generation", true);

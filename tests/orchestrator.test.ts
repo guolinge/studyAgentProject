@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { runPipeline, extractTitle, type PipelineDeps, type PipelineResult } from "../src/orchestrator.js";
+import { runPipeline, extractTitle, COPY_OUTLINE_SIGNAL, type PipelineDeps, type PipelineResult } from "../src/orchestrator.js";
 
 /** 断言结果为 single 模式并返回，使后续属性访问类型安全 */
 function asSingle(res: PipelineResult) {
@@ -261,5 +261,38 @@ describe("runPipeline", () => {
     });
     expect(publish).toHaveBeenCalledOnce(); // 研究失败仍然出稿
     expect((res as { kind: string }).kind).toBe("single");
+  });
+});
+
+describe("门2 复制大纲 offload 分支", () => {
+  it("门2 返回哨兵 → 建空文档+入索引+结束，不跑生成/审核", async () => {
+    const loadPrompt = (n: string) => `[${n}]`;
+    const runRole = vi.fn(async (role: string) => {
+      if (role === "questionAnalysis") return "## 文档标题\npnpm 原理\n## 归档位置\n技术\n";
+      if (role === "contentOrganization") return "# pnpm\n## 1. 问题\n### 1.1\n- 体量: 中, 约 200 字";
+      return "SHOULD_NOT_BE_CALLED:" + role;
+    });
+    const gate = vi.fn()
+      .mockResolvedValueOnce("")
+      .mockResolvedValueOnce(COPY_OUTLINE_SIGNAL);
+    const publishBlank = vi.fn().mockResolvedValue("http://blank-doc");
+    const updateIndex = vi.fn().mockResolvedValue(undefined);
+
+    const res = await runPipeline("讲讲 pnpm", {
+      loadPrompt, runRole, gate,
+      publish: vi.fn().mockResolvedValue("u"),
+      publishBlank, updateIndex,
+    });
+
+    expect(res.kind).toBe("outline_copied");
+    if (res.kind === "outline_copied") {
+      expect(res.url).toBe("http://blank-doc");
+      expect(res.bundle).toContain("pnpm");
+      expect(res.bundle).toContain("资深技术作者");
+    }
+    expect(publishBlank).toHaveBeenCalledTimes(1);
+    expect(updateIndex).toHaveBeenCalledTimes(1);
+    expect(runRole).not.toHaveBeenCalledWith("contentGeneration", expect.anything());
+    expect(runRole).not.toHaveBeenCalledWith("contentReview", expect.anything());
   });
 });
