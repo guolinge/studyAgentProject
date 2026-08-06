@@ -1,18 +1,18 @@
 {
   "defaults": {
-    "model": "claude-sonnet-4-6",
+    "model": "qwen-max-latest",
     "effort": "high",
     "maxTokens": 16000,
     "thinking": "adaptive"
   },
   "agents": {
     "questionAnalysis": {
-      "model": "claude-sonnet-4-6",
+      "model": "qwen-max-latest",
       "effort": "medium"
     },
     "searchResearch": {
-      "model": "claude-sonnet-4-6",
-      "effort": "high",
+      "model": "qwen-max-latest",
+      "effort": "medium",
       "maxTokens": 12000
     },
     "contentOrganization": {
