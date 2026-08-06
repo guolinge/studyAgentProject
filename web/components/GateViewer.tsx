@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { GateEvent } from "@/lib/types";
+import { COPY_OUTLINE_SIGNAL } from "@/lib/types";
 import { renderMarkdown } from "@/lib/markdown";
 
 // 全屏弹窗（挂载到 body 避免层叠上下文问题）
@@ -164,6 +165,19 @@ export default function GateViewer({ event, onSubmit, readOnly = false }: Props)
                 if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
               }}
             />
+            {event.bundle && (
+              <button
+                type="button"
+                onClick={async () => {
+                  try { await navigator.clipboard.writeText(event.bundle!); }
+                  catch { /* 剪贴板不可用时忽略，仍继续提交信号 */ }
+                  onSubmit?.(COPY_OUTLINE_SIGNAL);
+                }}
+                className="px-4 py-2 rounded-lg text-sm font-semibold whitespace-nowrap bg-emerald-600 hover:bg-emerald-500 text-white transition-colors shadow-sm"
+              >
+                复制大纲
+              </button>
+            )}
             <button
               onClick={submit}
               className={`px-4 py-2 rounded-lg text-white text-sm font-semibold whitespace-nowrap transition-colors shadow-sm ${
