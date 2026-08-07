@@ -15,7 +15,7 @@ function FullscreenModal({
 }: {
   event: GateEvent;
   onClose: () => void;
-  onSubmit?: (reply: string) => void;
+  onSubmit?: (reply: string, bundle?: string) => void;
   readOnly: boolean;
 }) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -100,7 +100,7 @@ function FullscreenModal({
 
 interface Props {
   event: GateEvent | null;
-  onSubmit?: (reply: string) => void;
+  onSubmit?: (reply: string, bundle?: string) => void;
   readOnly?: boolean;
 }
 
@@ -171,7 +171,7 @@ export default function GateViewer({ event, onSubmit, readOnly = false }: Props)
                 onClick={async () => {
                   try { await navigator.clipboard.writeText(event.bundle!); }
                   catch { /* 剪贴板不可用时忽略，仍继续提交信号 */ }
-                  onSubmit?.(COPY_OUTLINE_SIGNAL);
+                  onSubmit?.(COPY_OUTLINE_SIGNAL, event.bundle);
                 }}
                 className="px-4 py-2 rounded-lg text-sm font-semibold whitespace-nowrap bg-emerald-600 hover:bg-emerald-500 text-white transition-colors shadow-sm"
               >

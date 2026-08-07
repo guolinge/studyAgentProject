@@ -24,6 +24,7 @@ import { startRun, openEventStream, submitGate, refreshFolderTree, getRunDetail 
 import { getSettings } from "@/lib/settingsApi";
 import { renderMarkdown } from "@/lib/markdown";
 import type { PipelineEvent, GateEvent, HistoryItem, StepStat } from "@/lib/types";
+import { COPY_OUTLINE_SIGNAL } from "@/lib/types";
 
 type Status = "idle" | "running" | "done" | "error";
 
@@ -49,6 +50,12 @@ interface State {
   historyTick: number;
   // 刷新文件夹树消息
   refreshMsg: string;
+  // 复制大纲的 bundle（供再次复制）
+  lastBundle: string | null;
+  // 当前运行的步骤统计（done 后从服务器拉取）
+  runSteps: StepStat[] | null;
+  // 步骤实时计时（label → ms）
+  stepTimings: Record<string, number>;
 }
 
 type Action =
@@ -61,7 +68,10 @@ type Action =
   | { type: "RESET" }
   | { type: "SELECT_GATE"; gate: SelectedGate | null }
   | { type: "VIEW_RUN"; runId: string; events: PipelineEvent[]; steps: StepStat[]; item: HistoryItem }
-  | { type: "CLEAR_VIEW" };
+  | { type: "CLEAR_VIEW" }
+  | { type: "SAVE_BUNDLE"; bundle: string }
+  | { type: "SET_RUN_STEPS"; steps: StepStat[] }
+  | { type: "STEP_TIMING"; label: string; durationMs: number };
 
 function reducer(state: State, action: Action): State {
   switch (action.type) {
@@ -80,7 +90,10 @@ function reducer(state: State, action: Action): State {
         viewDocFolder: null,
         viewDocTitle: null,
         selectedGate: null,
-        historyTick: state.historyTick + 1, // 立即刷新左侧栏（dbCreateRun 已写库）
+        lastBundle: null,
+        runSteps: null,
+        stepTimings: {},
+        historyTick: state.historyTick + 1,
       };
     case "EVENT":
       return { ...state, events: [...state.events, action.event] };
@@ -121,6 +134,12 @@ function reducer(state: State, action: Action): State {
         viewDocTitle: null,
         selectedGate: null,
       };
+    case "SAVE_BUNDLE":
+      return { ...state, lastBundle: action.bundle };
+    case "SET_RUN_STEPS":
+      return { ...state, runSteps: action.steps };
+    case "STEP_TIMING":
+      return { ...state, stepTimings: { ...state.stepTimings, [action.label]: action.durationMs } };
     default:
       return state;
   }
@@ -141,6 +160,9 @@ const INIT: State = {
   selectedGate: null,
   historyTick: 0,
   refreshMsg: "",
+  lastBundle: null,
+  runSteps: null,
+  stepTimings: {},
 };
 
 // 从 events 中提取 active gate（最后一个尚未 closed 的 gate 事件）
@@ -168,6 +190,7 @@ export default function Home() {
   const [showSettings, setShowSettings] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const closeSSERef = useRef<(() => void) | null>(null);
+  const stepStartTimesRef = useRef<Map<string, number>>(new Map());
 
   useEffect(() => {
     getSettings()
@@ -196,9 +219,18 @@ export default function Home() {
           );
           return;
         }
-        // step_start / progress 清空流式状态（旧步骤结束 / 新步骤开始）
-        if (event.type === "step_start" || event.type === "progress") {
+        // step_start: 清流式输出 + 记录开始时间
+        if (event.type === "step_start") {
           setStreamingDelta(null);
+          stepStartTimesRef.current.set(event.label, Date.now());
+        }
+        // progress: 清流式输出 + 计算耗时
+        if (event.type === "progress") {
+          setStreamingDelta(null);
+          const start = stepStartTimesRef.current.get(event.label);
+          if (start != null) {
+            dispatch({ type: "STEP_TIMING", label: event.label, durationMs: Date.now() - start });
+          }
         }
         if (event.type === "doc_created") {
           dispatch({ type: "DOC_CREATED", url: event.url, folderName: event.folderName });
@@ -208,6 +240,10 @@ export default function Home() {
           closeSSERef.current?.();
           setStreamingDelta(null);
           dispatch({ type: "DONE" });
+          // done 后拉取服务端步骤统计（含 token + 精确耗时）
+          getRunDetail(runId).then(({ steps }) => {
+            dispatch({ type: "SET_RUN_STEPS", steps });
+          }).catch(() => {});
         } else if (event.type === "error") {
           closeSSERef.current?.();
           setStreamingDelta(null);
@@ -220,8 +256,11 @@ export default function Home() {
     }
   }, [state.status]);
 
-  const handleGateSubmit = useCallback(async (reply: string) => {
+  const handleGateSubmit = useCallback(async (reply: string, bundle?: string) => {
     if (!state.runId) return;
+    if (reply === COPY_OUTLINE_SIGNAL && bundle) {
+      dispatch({ type: "SAVE_BUNDLE", bundle });
+    }
     await submitGate(state.runId, reply);
     dispatch({ type: "SELECT_GATE", gate: null });
   }, [state.runId]);
@@ -278,7 +317,7 @@ export default function Home() {
 
   // 右栏和中间列使用的事件源
   const activeEvents = isViewMode ? state.viewEvents : state.events;
-  const activeSteps = isViewMode ? state.viewSteps : undefined;
+  const activeSteps = isViewMode ? state.viewSteps : (state.runSteps ?? undefined);
   const activeDocUrl = isViewMode ? state.viewDocUrl : state.docUrl;
   const activeDocFolder = isViewMode ? state.viewDocFolder : state.docFolder;
   const activeDocTitle = isViewMode ? state.viewDocTitle : null;
@@ -330,7 +369,14 @@ export default function Home() {
         <HistoryPanel
           activeRunId={state.runId}
           viewRunId={state.viewRunId}
-          onNewConversation={() => dispatch({ type: "CLEAR_VIEW" })}
+          onNewConversation={() => {
+              if (state.viewRunId !== null) {
+                dispatch({ type: "CLEAR_VIEW" });
+              } else if (state.status !== "running") {
+                if (textareaRef.current) textareaRef.current.value = "";
+                dispatch({ type: "RESET" });
+              }
+            }}
           onSelectRun={handleSelectRun}
           refreshTick={state.historyTick}
         />
@@ -450,6 +496,23 @@ export default function Home() {
             </div>
           )}
 
+          {/* 复制大纲后的再次复制区块 */}
+          {!isViewMode && state.lastBundle && state.status === "done" && (
+            <div className="w-full max-w-2xl mx-auto flex items-center gap-3 px-4 py-3 border border-emerald-200 rounded-xl bg-emerald-50">
+              <span className="text-sm text-emerald-700 flex-1">📋 大纲 bundle 已复制到剪贴板（可随时再次复制）</span>
+              <button
+                type="button"
+                onClick={async () => {
+                  try { await navigator.clipboard.writeText(state.lastBundle!); }
+                  catch { /* ignore */ }
+                }}
+                className="px-4 py-1.5 rounded-lg text-sm font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition-colors flex-shrink-0"
+              >
+                再次复制
+              </button>
+            </div>
+          )}
+
           {/* 尾部事件（review_feedback / done / error） */}
           {tailEvents.length > 0 && (
             <div className="w-full max-w-2xl mx-auto space-y-2">
@@ -489,6 +552,7 @@ export default function Home() {
         <StepsSidebar
           events={activeEvents}
           steps={activeSteps}
+          stepTimings={isViewMode ? undefined : state.stepTimings}
           selectedGateTitle={state.selectedGate?.title ?? null}
           onSelectGate={handleSelectGate}
           readOnly={isViewMode}

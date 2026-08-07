@@ -59,6 +59,7 @@ function buildSidebarRows(events: PipelineEvent[]): SidebarRow[] {
 interface Props {
   events: PipelineEvent[];
   steps?: StepStat[];
+  stepTimings?: Record<string, number>; // label → durationMs，live 追踪
   selectedGateTitle: string | null;
   onSelectGate: (title: string, content: string) => void;
   readOnly?: boolean;
@@ -67,6 +68,7 @@ interface Props {
 export default function StepsSidebar({
   events,
   steps,
+  stepTimings,
   selectedGateTitle,
   onSelectGate,
   readOnly = false,
@@ -92,6 +94,9 @@ export default function StepsSidebar({
       <div className="flex-1 overflow-y-auto px-2 pb-4 space-y-0.5">
         {rows.map((row, i) => {
           if (row.kind === "step") {
+            const durationMs = row.status === "done"
+              ? (steps?.find((s) => s.label === row.label)?.durationMs ?? stepTimings?.[row.label])
+              : undefined;
             return (
               <div key={i} className="flex items-center gap-2 px-2.5 py-1.5 rounded-md text-xs text-gray-500">
                 {row.status === "running" ? (
@@ -99,7 +104,12 @@ export default function StepsSidebar({
                 ) : (
                   <span className="text-emerald-500 flex-shrink-0">✓</span>
                 )}
-                <span className="truncate">{row.label}</span>
+                <span className="truncate flex-1">{row.label}</span>
+                {durationMs != null && (
+                  <span className="flex-shrink-0 text-gray-300 tabular-nums">
+                    {(durationMs / 1000).toFixed(1)}s
+                  </span>
+                )}
               </div>
             );
           }
@@ -136,16 +146,21 @@ export default function StepsSidebar({
           return null;
         })}
 
-        {/* 步骤 token 统计（readOnly = 历史查看模式） */}
-        {readOnly && steps && steps.length > 0 && (
+        {/* 步骤 token + 耗时统计（done 后或历史查看时显示） */}
+        {steps && steps.length > 0 && (
           <div className="mt-4 pt-3 border-t border-gray-100">
             <p className="text-[10px] tracking-widest uppercase text-gray-400 px-2.5 mb-1.5">Token 用量</p>
             {steps.map((s, i) => (
-              <div key={i} className="flex items-center justify-between px-2.5 py-1 text-[10px] text-gray-400">
-                <span className="truncate max-w-[100px]">{s.label}</span>
-                <span className="flex-shrink-0 ml-1 tabular-nums">
+              <div key={i} className="flex items-center gap-1 px-2.5 py-1 text-[10px] text-gray-400">
+                <span className="truncate flex-1 min-w-0">{s.label}</span>
+                <span className="flex-shrink-0 tabular-nums">
                   {(s.inputTokens + s.outputTokens).toLocaleString()}
                 </span>
+                {s.durationMs > 0 && (
+                  <span className="flex-shrink-0 tabular-nums text-gray-300">
+                    {(s.durationMs / 1000).toFixed(1)}s
+                  </span>
+                )}
               </div>
             ))}
           </div>
