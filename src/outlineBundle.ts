@@ -14,6 +14,24 @@ export interface BundleParts {
   drawingRules: string;  // 精简 drawing-rules-ascii.md 全文
 }
 
+export type ResearchMode = "full" | "digest" | "none";
+
+const DIGEST_CAP = 1200; // 抓不到结构时的兜底截断字数
+
+/**
+ * 从研究备忘录抽取"关键事实与结论"+"存疑/待核实"两节，丢掉体积大的"按话题的资料"和"框定补充"。
+ * 备忘录格式见 prompts/search-research.md（## 级小节）。抓不到目标小节时兜底截断到 DIGEST_CAP。
+ */
+export function digestResearch(memo: string): string {
+  if (!memo.trim()) return "";
+  const sections = memo.split(/(?=^## )/m);
+  const kept = sections.filter((s) => /^##\s*(关键事实|存疑)/.test(s.trim()));
+  if (kept.length === 0) {
+    return memo.length > DIGEST_CAP ? memo.slice(0, DIGEST_CAP) + "\n…（研究资料已截断）" : memo;
+  }
+  return kept.join("\n").trim();
+}
+
 const SEP = (name: string) => `\n\n## ===== ${name} =====\n\n`;
 
 // 覆盖 content-generation.md 里"写【配图指令】占位交给后续 agent"的指令：
@@ -23,15 +41,21 @@ const DRAW_OVERRIDE =
   "遇到需要图的地方，请**直接用字符图画进围栏代码块**（规范见下一段），" +
   "不要输出 `【配图指令:...】` 占位符。";
 
-export function buildOutlineBundle(p: BundleParts): string {
+export function buildOutlineBundle(p: BundleParts, researchMode: ResearchMode = "digest"): string {
+  const research =
+    researchMode === "none" ? "" :
+    researchMode === "digest" ? digestResearch(p.research) :
+    p.research;
+
   const framing =
     "请扮演资深技术作者，读者是一名前端工程师（懂后端、目标成为架构师）。" +
     "请严格按下面的【骨架】【方法论】【风格规则】【字符画图规范】，" +
-    "输出一篇结构清晰、有推导、有类比、有代码与字符图的完整 Markdown 讲解文档。";
+    "输出一篇结构清晰、有推导、有类比、有代码与字符图的完整 Markdown 讲解文档。" +
+    "如需最新版本号、实践现状等时效信息，可自行联网搜索核实并标注来源。";
 
   let out = framing;
   out += SEP("原始问题") + p.question;
-  if (p.research.trim()) out += SEP("联网研究资料（最新事实优先采信）") + p.research;
+  if (research.trim()) out += SEP("联网研究资料（最新事实优先采信）") + research;
   out += SEP("已确认的骨架（含体量，严格按体量写足）") + p.skeleton;
   out += SEP("内容生成方法论") + p.generation;
   out += SEP("配图处理（覆盖指令）") + DRAW_OVERRIDE;
