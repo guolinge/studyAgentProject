@@ -643,6 +643,32 @@ export default function SettingsModal({
                     </button>
                   </div>
 
+                  {/* 复制大纲：联网研究含量 */}
+                  <div className="py-1">
+                    <p className="text-sm font-medium text-gray-700">复制大纲 · 联网研究含量</p>
+                    <p className="text-xs text-gray-400 mt-0.5 mb-2">「复制大纲」bundle 里研究资料的多少（中台自己也能联网搜）</p>
+                    <div className="flex gap-1">
+                      {([
+                        { v: "full", label: "全部" },
+                        { v: "digest", label: "精简" },
+                        { v: "none", label: "不含" },
+                      ] as const).map((opt) => (
+                        <button
+                          key={opt.v}
+                          type="button"
+                          onClick={() => patchApp({ bundleResearch: opt.v })}
+                          className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                            app.bundleResearch === opt.v
+                              ? "bg-[rgb(var(--accent-500))] text-white"
+                              : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                          }`}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
                   {/* maxReviewRetries */}
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">审核最大重试次数</label>
