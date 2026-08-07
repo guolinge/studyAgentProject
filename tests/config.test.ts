@@ -42,7 +42,9 @@ describe("resolveAgentConfig", () => {
 describe("loadConfig", () => {
   it("loads and validates the real agents.config.json from project root", () => {
     const cfg = loadConfig();
-    expect(cfg.defaults.model).toBe("qwen-max-latest");
+    // 不硬编码具体模型名（用户会自由切换默认模型）；只校验结构合法
+    expect(typeof cfg.defaults.model).toBe("string");
+    expect(cfg.defaults.model.length).toBeGreaterThan(0);
     expect(Object.keys(cfg.agents)).toContain("contentGeneration");
   });
 });
