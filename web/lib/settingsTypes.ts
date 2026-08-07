@@ -11,6 +11,7 @@ export interface AppSettings {
   gate1Enabled:          boolean;
   maxReviewRetries:      number;
   svgDiagram:            boolean;
+  bundleResearch:        "full" | "digest" | "none";
 }
 
 export interface AgentDefaults {

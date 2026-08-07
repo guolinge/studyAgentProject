@@ -12,6 +12,7 @@ export const AppSettingsSchema = z.object({
   gate1Enabled:          z.boolean().default(true),
   maxReviewRetries:      z.number().int().min(0).max(5).default(2),
   svgDiagram:            z.boolean().default(false),
+  bundleResearch:        z.enum(["full", "digest", "none"]).default("digest"),
 });
 
 export type AppSettings = z.infer<typeof AppSettingsSchema>;

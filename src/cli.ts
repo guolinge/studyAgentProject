@@ -91,6 +91,7 @@ async function main() {
   const noDiagram = process.env.NO_DIAGRAM === "1";
   const noDistiller = process.env.NO_DISTILLER === "1";
   const diagramMode: DiagramMode = process.env.SVG_DIAGRAM === "1" ? "svg" : "ascii";
+  const bundleResearchMode = (process.env.BUNDLE_RESEARCH as "full" | "digest" | "none") || "digest";
 
   // 调试省 token:MODEL_OVERRIDE / EFFORT_OVERRIDE 覆盖所有 agent(不改正式 config)
   const modelOverride = process.env.MODEL_OVERRIDE;
@@ -235,6 +236,7 @@ async function main() {
       dedup,
       updateIndex,
       publishBlank,
+      bundleResearchMode,
       /**
        * publish:流水线完成后把最终 Markdown 写入飞书。
        *
@@ -293,6 +295,7 @@ async function main() {
           dedup,
           updateIndex,
           publishBlank,
+          bundleResearchMode,
           // 用拆分时确认的归档位置覆盖子流水线的 publish
           publish: async (markdown) => {
             let folderToken: string;

@@ -22,7 +22,7 @@ import type { Asker } from "./io.js";
 import type { SearchHit } from "./tools/lark.js";
 import { parseDedupKeywords, searchDuplicates, formatDedupPrompt, parseGateChoice } from "./dedup.js";
 import { renderFolderTree, findByToken, folderTreeRoot } from "./folderTree.js";
-import { buildOutlineBundle } from "./outlineBundle.js";
+import { buildOutlineBundle, type ResearchMode } from "./outlineBundle.js";
 
 /** 门2「复制大纲」哨兵：gate 返回此值表示走 offload 分支 */
 export const COPY_OUTLINE_SIGNAL = "__COPY_OUTLINE__";
@@ -147,6 +147,8 @@ export interface PipelineDeps {
   onReviewFeedback?: (feedback: string) => void; // 内容审核 FAIL 时推送反馈内容（问题6）
   /** 在现有飞书文档上补画 SVG 配图（由 question-analysis 的 patch_diagrams 操作类型触发）*/
   patchDocDiagrams?: (docUrl: string) => Promise<{ url: string; patched: number; total: number }>;
+  /** 门2「复制大纲」bundle 的联网研究档位（full/digest/none），默认 digest */
+  bundleResearchMode?: ResearchMode;
 }
 
 /** 拆分模式下的单篇子文档描述 */
@@ -295,7 +297,7 @@ export async function runPipeline(userInput: string, deps: PipelineDeps): Promis
       generation: deps.loadPrompt("content-generation"),
       styleRules: deps.loadPrompt("style-rules"),
       drawingRules: deps.loadPrompt("drawing-rules-ascii"),
-    });
+    }, deps.bundleResearchMode ?? "digest");
     const reply = await deps.gate("门2 · 确认骨架", skeleton, bundle);
     if (reply === "") break; // 通过，继续内容生成
     if (reply === COPY_OUTLINE_SIGNAL || reply === "copy" || reply === "复制大纲") {

@@ -360,7 +360,7 @@ function buildDeps(runId: string) {
     return { url: docUrl, patched: result.patched, total: result.total };
   };
 
-  return { loadPrompt, runRole, gate, publish, publishBlank, researchEnabled, dedup, updateIndex, onReviewFeedback, patchDocDiagrams, reviewMaxRetries: appSettings.maxReviewRetries };
+  return { loadPrompt, runRole, gate, publish, publishBlank, researchEnabled, dedup, updateIndex, onReviewFeedback, patchDocDiagrams, reviewMaxRetries: appSettings.maxReviewRetries, bundleResearchMode: appSettings.bundleResearch };
 }
 
 // ── Hono 应用 ─────────────────────────────────────────────────────────────────
