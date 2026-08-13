@@ -46,6 +46,18 @@ export async function submitGate(runId: string, reply: string): Promise<void> {
   });
 }
 
+export async function retryFromStep(runId: string, fromStep?: string): Promise<void> {
+  const res = await fetch(`${BASE}/api/run/${runId}/retry`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ fromStep }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({})) as { error?: string };
+    throw new Error(body.error ?? `重试失败: ${res.status}`);
+  }
+}
+
 export async function refreshFolderTree(): Promise<{ ok: boolean; updatedAt?: string; reason?: string }> {
   const res = await fetch(`${BASE}/api/folder-tree/refresh`, { method: "POST" });
   return res.json();

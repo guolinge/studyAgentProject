@@ -1,6 +1,6 @@
 export interface StepStartEvent      { type: "step_start";      role: string; label: string }
 export interface ProgressEvent       { type: "progress";        role: string; label: string } // 环节完成 ✓
-export interface StepErrorEvent      { type: "step_error";      label: string; message: string }
+export interface StepErrorEvent      { type: "step_error";      label: string; message: string; step?: string; recoverable?: boolean; soft?: boolean }
 export interface GateEvent           { type: "gate";            title: string; content: string; bundle?: string }
 export interface GateClosedEvent     { type: "gate_closed" }
 export interface DocCreatedEvent     { type: "doc_created";     url: string; folderName: string }

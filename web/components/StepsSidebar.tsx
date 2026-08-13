@@ -24,6 +24,9 @@ interface ErrorRow {
   kind: "step_error";
   label: string;
   message: string;
+  step?: string;
+  recoverable?: boolean;
+  soft?: boolean;
 }
 interface GateRow {
   kind: "gate";
@@ -45,7 +48,7 @@ function buildSidebarRows(events: PipelineEvent[]): SidebarRow[] {
       if (idx >= 0) (rows[idx] as Row).status = "done";
       else rows.push({ kind: "step", label: e.label, status: "done" });
     } else if (e.type === "step_error") {
-      rows.push({ kind: "step_error", label: e.label, message: e.message });
+      rows.push({ kind: "step_error", label: e.label, message: e.message, step: e.step, recoverable: e.recoverable, soft: e.soft });
     } else if (e.type === "gate") {
       rows.push({ kind: "gate", title: e.title, content: e.content, closed: false });
     } else if (e.type === "gate_closed") {
@@ -62,6 +65,7 @@ interface Props {
   stepTimings?: Record<string, number>; // label → durationMs，live 追踪
   selectedGateTitle: string | null;
   onSelectGate: (title: string, content: string) => void;
+  onRetry?: (step: string) => void;
   readOnly?: boolean;
 }
 
@@ -71,6 +75,7 @@ export default function StepsSidebar({
   stepTimings,
   selectedGateTitle,
   onSelectGate,
+  onRetry,
   readOnly = false,
 }: Props) {
   const rows = buildSidebarRows(events);
@@ -114,10 +119,22 @@ export default function StepsSidebar({
             );
           }
           if (row.kind === "step_error") {
+            const showRetry = !readOnly && onRetry && row.recoverable && row.step;
             return (
               <div key={i} className="flex items-start gap-2 px-2.5 py-1.5 rounded-md text-xs">
-                <span className="text-red-400 flex-shrink-0 mt-0.5">✗</span>
-                <span className="text-gray-500 truncate" title={row.message}>{row.label}</span>
+                <span className={row.soft ? "text-amber-400" : "text-red-400"} style={{ flexShrink: 0, marginTop: 2 }}>
+                  {row.soft ? "⚠" : "✗"}
+                </span>
+                <span className="text-gray-500 truncate flex-1" title={row.message}>{row.label}</span>
+                {showRetry && (
+                  <button
+                    type="button"
+                    onClick={() => onRetry(row.step!)}
+                    className="flex-shrink-0 text-indigo-500 hover:text-indigo-700 hover:underline"
+                  >
+                    重试
+                  </button>
+                )}
               </div>
             );
           }

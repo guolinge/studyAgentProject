@@ -42,11 +42,12 @@ import {
   larkFetchDocContent,
   larkBlockInsertAfter,
   larkAppendToDoc,
+  larkAppendIndexRow,
   type SearchHit,
 } from "./tools/lark.js";
 import type { PlacementInfo } from "./orchestrator.js";
+import { runPipeline, runPipelineFrom, PipelineAbortError, type StepArtifacts, type PipelineStep } from "./orchestrator.js";
 import { tavilySearch, tavilyExtract, formatSearchContext } from "./tools/tavily.js";
-import { runPipeline } from "./orchestrator.js";
 import { patchDiagrams, renderDiagrams, extractDiagramSpecs, type DiagramMode } from "./diagrams.js";
 import { mergeIntoDoc } from "./merge.js";
 import { refreshFolderTree } from "./refreshFolderTree.js";
@@ -80,7 +81,7 @@ const AGENTS_CONFIG_PATH = path.resolve(
 
 export interface StepStartEvent    { type: "step_start";      role: AgentRole; label: string }
 export interface ProgressEvent     { type: "progress";        role: AgentRole; label: string } // 环节完成 ✓
-export interface StepErrorEvent    { type: "step_error";      label: string; message: string }
+export interface StepErrorEvent    { type: "step_error";      label: string; message: string; step?: PipelineStep; recoverable?: boolean; soft?: boolean }
 export interface GateEvent         { type: "gate";            title: string; content: string; bundle?: string }
 export interface GateClosedEvent   { type: "gate_closed" }
 export interface DocCreatedEvent   { type: "doc_created";     url: string; folderName: string }
@@ -100,14 +101,18 @@ interface RunState {
   eventQueue: PipelineEvent[];
   subscribers: Set<(e: PipelineEvent) => void>;
   gateResolver: ((reply: string) => void) | null;
+  userInput: string;           // 原始输入（含拖拽引用注入后），重试时复用
+  artifacts: StepArtifacts;    // 已成功环节的中间产物
+  failedStep: PipelineStep | null;
+  retrying: boolean;
 }
 
 const runs = new Map<string, RunState>();
 
-function createRun(topic: string): string {
+function createRun(topic: string, userInput: string): string {
   const id = randomUUID();
   const createdAt = Date.now();
-  runs.set(id, { eventQueue: [], subscribers: new Set(), gateResolver: null });
+  runs.set(id, { eventQueue: [], subscribers: new Set(), gateResolver: null, userInput, artifacts: {}, failedStep: null, retrying: false });
   dbCreateRun(id, topic, createdAt);
   return id;
 }
@@ -258,8 +263,7 @@ function buildDeps(runId: string) {
       ? undefined
       : async (title: string, url: string) => {
           const date = new Date().toISOString().split("T")[0];
-          const row = `| ${title} | [链接](${url}) | ${date} |\n`;
-          await larkAppendToDoc(indexDocToken, row);
+          await larkAppendIndexRow(indexDocToken, title, "", url, date);
         };
 
   const gate = async (title: string, content: string, bundle?: string): Promise<string> => {
@@ -360,7 +364,10 @@ function buildDeps(runId: string) {
     return { url: docUrl, patched: result.patched, total: result.total };
   };
 
-  return { loadPrompt, runRole, gate, publish, publishBlank, researchEnabled, dedup, updateIndex, onReviewFeedback, patchDocDiagrams, reviewMaxRetries: appSettings.maxReviewRetries, bundleResearchMode: appSettings.bundleResearch };
+  return { loadPrompt, runRole, gate, publish, publishBlank, researchEnabled, dedup, updateIndex, onReviewFeedback, patchDocDiagrams, reviewMaxRetries: appSettings.maxReviewRetries, bundleResearchMode: appSettings.bundleResearch,
+    onSoftError: (step: PipelineStep, label: string, message: string) =>
+      pushEvent(runId, { type: "step_error", label, message, step, soft: true, recoverable: true }),
+  };
 }
 
 // ── Hono 应用 ─────────────────────────────────────────────────────────────────
@@ -438,26 +445,26 @@ app.post("/api/run", async (c) => {
   if (!topic?.trim()) return c.json({ error: "topic required" }, 400);
 
   const rawTopic = topic.trim();
-  const runId = createRun(rawTopic);
+  // 拖拽引用：若 topic 含飞书 URL，预取大纲注入上下文（LLM 据此判断操作类型）
+  let userInput = rawTopic;
+  const urlMatch = rawTopic.match(FEISHU_URL_RE);
+  if (urlMatch) {
+    try {
+      const outline = await larkFetchOutline(urlMatch[0]);
+      if (outline.trim()) {
+        userInput = `## 引用文档大纲\n\n${outline}\n\n---\n\n${rawTopic}`;
+      }
+    } catch {
+      // 预取失败不阻断，直接用原始 topic
+    }
+  }
+
+  const runId = createRun(rawTopic, userInput);
   const deps = buildDeps(runId);
 
   // 后台异步跑，不 await
   (async () => {
     try {
-      // 拖拽引用：若 topic 含飞书 URL，预取大纲注入上下文（LLM 据此判断操作类型）
-      let userInput = rawTopic;
-      const urlMatch = rawTopic.match(FEISHU_URL_RE);
-      if (urlMatch) {
-        try {
-          const outline = await larkFetchOutline(urlMatch[0]);
-          if (outline.trim()) {
-            userInput = `## 引用文档大纲\n\n${outline}\n\n---\n\n${rawTopic}`;
-          }
-        } catch {
-          // 预取失败不阻断，直接用原始 topic
-        }
-      }
-
       const result = await runPipeline(userInput, deps);
       if (result.kind === "split") {
         for (const sub of result.topics) {
@@ -485,12 +492,80 @@ app.post("/api/run", async (c) => {
       }
       dbSetStatus(runId, "done");
     } catch (e) {
-      pushEvent(runId, { type: "error", message: (e as Error).message });
-      dbSetStatus(runId, "error");
+      handlePipelineError(runId, e);
     }
   })();
 
   return c.json({ runId });
+});
+
+/** 流水线异常分类：PipelineAbortError = 环节失败可重试（paused），其他 = 致命错误 */
+function handlePipelineError(runId: string, e: unknown): void {
+  const run = runs.get(runId);
+  if (e instanceof PipelineAbortError) {
+    if (run) run.failedStep = e.step;
+    pushEvent(runId, {
+      type: "step_error", label: e.step, message: e.message,
+      step: e.step, recoverable: true,
+    });
+    pushEvent(runId, { type: "error", message: `${e.step} 失败：${e.message}` });
+    dbSetStatus(runId, "error");
+  } else {
+    pushEvent(runId, { type: "error", message: (e as Error).message });
+    dbSetStatus(runId, "error");
+  }
+}
+
+// 从失败环节重试
+app.post("/api/run/:id/retry", async (c) => {
+  const runId = c.req.param("id");
+  const run = runs.get(runId);
+  if (!run) return c.json({ error: "run not found" }, 404);
+  if (run.retrying) return c.json({ error: "already retrying" }, 409);
+
+  const body = await c.req.json<{ fromStep?: PipelineStep }>().catch(() => ({} as { fromStep?: PipelineStep }));
+  const step = body.fromStep ?? run.failedStep;
+  if (!step) return c.json({ error: "no failed step to retry" }, 400);
+
+  // 清掉残留的 gateResolver，避免泄漏（上一轮 gate 可能还 pending）
+  if (run.gateResolver) { run.gateResolver(""); run.gateResolver = null; }
+
+  run.retrying = true;
+  run.failedStep = null;
+  const deps = buildDeps(runId);
+  pushEvent(runId, { type: "progress", role: "questionAnalysis", label: `重试：${step}` });
+
+  (async () => {
+    try {
+      const result = await runPipelineFrom(run.userInput, deps, run.artifacts, step);
+      run.retrying = false;
+      if (result.kind === "split") {
+        for (const sub of result.topics) {
+          const fixedPlacement = sub.placement;
+          const subDeps = {
+            ...buildDeps(runId),
+            publish: async (markdown: string) => {
+              let folderToken: string;
+              if (fixedPlacement.type === "new") {
+                folderToken = await larkCreateFolder(fixedPlacement.folderName, fixedPlacement.parentToken);
+              } else {
+                folderToken = fixedPlacement.folderToken;
+              }
+              return await larkCreateDoc(markdown, "markdown", folderToken);
+            },
+          };
+          await runPipeline(sub.title, subDeps);
+        }
+      }
+      pushEvent(runId, { type: "done", kind: "single" });
+      dbSetStatus(runId, "done");
+    } catch (e) {
+      run.retrying = false;
+      handlePipelineError(runId, e);
+    }
+  })();
+
+  return c.json({ ok: true });
 });
 
 // SSE 进度流

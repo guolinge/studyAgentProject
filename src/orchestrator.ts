@@ -149,6 +149,34 @@ export interface PipelineDeps {
   patchDocDiagrams?: (docUrl: string) => Promise<{ url: string; patched: number; total: number }>;
   /** 门2「复制大纲」bundle 的联网研究档位（full/digest/none），默认 digest */
   bundleResearchMode?: ResearchMode;
+  /** 软错误上报：降级不阻塞时通知前端（可选） */
+  onSoftError?: (step: PipelineStep, label: string, message: string) => void;
+}
+
+/** 流水线环节标识，用于 artifacts 索引和重试定位 */
+export type PipelineStep =
+  | "questionAnalysis" | "patch_diagrams" | "split" | "dedup" | "research"
+  | "organization" | "generation" | "review" | "publish" | "updateIndex";
+
+/** 中间产物寄存器：每个环节成功后把产出写进来，供重试时复用 */
+export interface StepArtifacts {
+  outline1?: string;
+  placement?: PlacementInfo;
+  opType?: OperationType;
+  splitDocs?: SplitDoc[] | null;
+  dedupChoice?: { action: "merge" | "new"; target?: SearchHit };
+  researchMemo?: string;
+  skeleton?: string;
+  markdown?: string;
+  url?: string;
+}
+
+/** 环节失败时抛出，外层据此判断是否走 paused 而非全局 error */
+export class PipelineAbortError extends Error {
+  constructor(public step: PipelineStep, message: string) {
+    super(message);
+    this.name = "PipelineAbortError";
+  }
 }
 
 /** 拆分模式下的单篇子文档描述 */
@@ -203,150 +231,224 @@ async function iterateWithGate(
 }
 
 /**
- * 完整流水线。
+ * 完整流水线（入口，等价于 fromStep=undefined 的 runPipelineFrom）。
  *
  * 内容审核打回机制:
  *   contentReview agent 输出 "PASS" 则继续;输出 "FAIL ..." 则把问题拼进 user 重跑
  *   contentGeneration,最多 maxRetries 次。超出上限直接 publish(避免无限循环)。
  */
 export async function runPipeline(userInput: string, deps: PipelineDeps): Promise<PipelineResult> {
+  return runPipelineFrom(userInput, deps, {});
+}
+
+/** step 执行顺序，fromStep 之前的跳过（artifacts 已有） */
+const STEP_ORDER: PipelineStep[] = [
+  "questionAnalysis", "patch_diagrams", "split", "dedup", "research",
+  "organization", "generation", "review", "publish", "updateIndex",
+];
+
+/**
+ * 可断点续跑的流水线。
+ *
+ * artifacts 持有已成功环节的产出，fromStep 指定从哪个环节开始（之前的跳过）。
+ * 每个环节失败抛 PipelineAbortError，软失败（降级）调 onSoftError 不抛。
+ * 分支返回（patch_diagrams / split / dedup merge / 复制大纲）通过 throw 一个
+ * 内部 sentinel 结果对象实现提前退出——见 StepExitSignal。
+ */
+export async function runPipelineFrom(
+  userInput: string,
+  deps: PipelineDeps,
+  artifacts: StepArtifacts,
+  fromStep?: PipelineStep,
+): Promise<PipelineResult> {
   const maxRetries = deps.reviewMaxRetries ?? 2;
-  const feedbacks: GateFeedback[] = []; // 收集所有门的非空反馈
+  const feedbacks: GateFeedback[] = [];
   const collect = (f: GateFeedback) => feedbacks.push(f);
+  const soft = (step: PipelineStep, label: string, message: string) =>
+    deps.onSoftError?.(step, label, message);
 
-  // ① 问题分析 →门1(轻):确认范围/意图
-  // 将可用文件夹目录注入 system prompt（替换占位符）
-  const qaSystem = buildSystem(deps.loadPrompt, "question-analysis", false)
-    .replace("{{FOLDER_TREE}}", renderFolderTree());
-  const outline1 = await iterateWithGate(
-    deps, "questionAnalysis", "门1 · 确认范围/意图", qaSystem, userInput, collect,
-  );
+  // fromStep 之前的环节跳过；fromStep 本身要执行
+  const startIdx = fromStep ? STEP_ORDER.indexOf(fromStep) : 0;
 
-  // 门1通过后，先检查操作类型（patch_diagrams 时直接补图，不走新建流程）
-  const opType = parseOperationType(outline1);
-  if (opType.mode === "patch_diagrams" && opType.docUrl && deps.patchDocDiagrams) {
-    const { url } = await deps.patchDocDiagrams(opType.docUrl);
-    return { kind: "single", url, markdown: "", skeleton: "", feedbacks };
-  }
-
-  // 从 questionAnalysis 输出中解析归档位置和文档标题
-  const placement = parsePlacement(outline1, userInput);
-
-  // 拆分检测：有拆分建议时弹拆分门，让用户决策
-  const splitDocs = parseSplitSuggestion(outline1);
-  if (splitDocs) {
-    const splitPrompt =
-      `检测到命题偏大，建议拆成 ${splitDocs.length} 篇：\n` +
-      splitDocs.map((d, i) => `  ${i + 1}. 「${d.title}」`).join("\n") +
-      "\n\n回车确认拆分 / 输入 n 不拆继续 / 输入修改意见重新分析";
-    const reply = await deps.gate("拆分建议", splitPrompt);
-    if (reply === "") {
-      // 用户确认拆分
-      return { kind: "split", topics: splitDocs };
+  // 跑 step，失败抛 PipelineAbortError，分支返回抛 StepExitSignal
+  const runStep = async (step: PipelineStep): Promise<void> => {
+    try {
+      const patch = await STEPS[step]();
+      if (patch) Object.assign(artifacts, patch);
+    } catch (e) {
+      if (e instanceof StepExitSignal) throw e;
+      throw new PipelineAbortError(step, (e as Error).message);
     }
-    // reply === "n" 或有修改意见时：继续当前流程（修改意见已被门迭代机制处理）
-  }
+  };
 
-  // 查重分流:从问题分析产出里提取关键词 → 搜旧文 → 有候选才弹查重门
-  if (deps.dedup) {
-    const keywords = parseDedupKeywords(outline1);
-    const candidates = keywords.length
-      ? await searchDuplicates(keywords, { search: deps.dedup.search })
-      : [];
-    if (candidates.length > 0) {
+  // 各 step 定义为闭包，共享 artifacts / feedbacks / collect / soft
+  const STEPS: Record<PipelineStep, () => Promise<Partial<StepArtifacts> | void>> = {
+    async questionAnalysis() {
+      const qaSystem = buildSystem(deps.loadPrompt, "question-analysis", false)
+        .replace("{{FOLDER_TREE}}", renderFolderTree());
+      const outline1 = await iterateWithGate(
+        deps, "questionAnalysis", "门1 · 确认范围/意图", qaSystem, userInput, collect,
+      );
+      return { outline1, opType: parseOperationType(outline1), placement: parsePlacement(outline1, userInput), splitDocs: parseSplitSuggestion(outline1) };
+    },
+
+    async patch_diagrams() {
+      const { opType } = artifacts;
+      if (opType?.mode === "patch_diagrams" && opType.docUrl && deps.patchDocDiagrams) {
+        const { url } = await deps.patchDocDiagrams(opType.docUrl);
+        throw new StepExitSignal({ kind: "single", url, markdown: "", skeleton: "", feedbacks });
+      }
+    },
+
+    async split() {
+      const { splitDocs } = artifacts;
+      if (!splitDocs) return;
+      const splitPrompt =
+        `检测到命题偏大，建议拆成 ${splitDocs.length} 篇：\n` +
+        splitDocs.map((d, i) => `  ${i + 1}. 「${d.title}」`).join("\n") +
+        "\n\n回车确认拆分 / 输入 n 不拆继续 / 输入修改意见重新分析";
+      const reply = await deps.gate("拆分建议", splitPrompt);
+      if (reply === "") throw new StepExitSignal({ kind: "split", topics: splitDocs });
+      // reply === "n" 或有修改意见时：继续当前流程
+    },
+
+    async dedup() {
+      if (!deps.dedup || !artifacts.outline1) return;
+      const keywords = parseDedupKeywords(artifacts.outline1);
+      const candidates = keywords.length
+        ? await searchDuplicates(keywords, { search: deps.dedup.search })
+        : [];
+      if (candidates.length === 0) return;
       const reply = await deps.gate("查重 · 发现相关旧文档", formatDedupPrompt(candidates));
       const choice = parseGateChoice(reply, candidates);
-      if (choice.action === "merge") {
-        try {
-          const { url, incrementalMarkdown } = await deps.dedup.merge(userInput, choice.target);
-          // 合并成功:提前返回旧文档的 url,不走新建流程
-          return { kind: "single", url, markdown: incrementalMarkdown, skeleton: "", feedbacks };
-        } catch (e) {
-          // 合并失败:打印警告,降级继续新建流程(不丢用户的研究内容)
-          console.error(`  ⚠ 合并失败,降级为新建:${(e as Error).message}`);
+      if (choice.action !== "merge") return;
+      try {
+        const { url, incrementalMarkdown } = await deps.dedup.merge(userInput, choice.target);
+        throw new StepExitSignal({ kind: "single", url, markdown: incrementalMarkdown, skeleton: "", feedbacks });
+      } catch (e) {
+        if (e instanceof StepExitSignal) throw e;
+        soft("dedup", "查重合并", (e as Error).message);
+        // 降级继续新建流程
+      }
+    },
+
+    async research() {
+      if (!deps.researchEnabled) return;
+      const researchSystem = buildSystem(deps.loadPrompt, "search-research", false);
+      const researchUser = `${userInput}\n\n【已确认的意图与一级话题】\n${artifacts.outline1 ?? ""}`;
+      try {
+        const researchMemo = await deps.runRole("searchResearch", { system: researchSystem, user: researchUser });
+        return { researchMemo };
+      } catch (e) {
+        soft("research", "联网研究", (e as Error).message);
+        return { researchMemo: "" };
+      }
+    },
+
+    async organization() {
+      if (!artifacts.outline1) throw new Error("缺少 outline1，无法组织内容");
+      const researchMemo = artifacts.researchMemo ?? "";
+      const withSearch = (base: string) => (researchMemo ? `${base}\n\n${researchMemo}` : base);
+      const orgSystem = buildSystem(deps.loadPrompt, "content-organization", true);
+      const orgUser = withSearch(`${userInput}\n\n【已确认的范围与意图】\n${artifacts.outline1}`);
+      let skeleton = await deps.runRole("contentOrganization", { system: orgSystem, user: orgUser });
+      for (;;) {
+        const bundle = buildOutlineBundle({
+          question: userInput,
+          research: researchMemo,
+          skeleton,
+          generation: deps.loadPrompt("content-generation"),
+          styleRules: deps.loadPrompt("style-rules"),
+          drawingRules: deps.loadPrompt("drawing-rules-ascii"),
+        }, deps.bundleResearchMode ?? "digest");
+        const reply = await deps.gate("门2 · 确认骨架", skeleton, bundle);
+        if (reply === "") break;
+        if (reply === COPY_OUTLINE_SIGNAL || reply === "copy" || reply === "复制大纲") {
+          if (!deps.publishBlank) throw new Error("publishBlank 未注入，无法执行复制大纲分支");
+          const placement = artifacts.placement!;
+          const url = await deps.publishBlank(placement.title, placement);
+          if (deps.updateIndex) {
+            try { await deps.updateIndex(placement.title, url); }
+            catch (e) { soft("updateIndex", "索引追加", (e as Error).message); }
+          }
+          throw new StepExitSignal({ kind: "outline_copied", url, bundle, feedbacks });
         }
+        collect({ gate: "门2 · 确认骨架", feedback: reply });
+        const user = `${orgUser}\n\n【上一版产出】\n${skeleton}\n\n【使用者修改意见】\n${reply}\n\n请据此修改后重新输出(保持同样的格式)。`;
+        skeleton = await deps.runRole("contentOrganization", { system: orgSystem, user });
       }
-    }
-  }
+      return { skeleton };
+    },
 
-  // 联网研究(searchResearch):带工具的 agent 自主检索,产出研究备忘录
-  // 失败时优雅降级:不中断流水线,只是生成内容不含研究资料
-  let researchMemo = "";
-  if (deps.researchEnabled) {
-    const researchSystem = buildSystem(deps.loadPrompt, "search-research", false);
-    const researchUser = `${userInput}\n\n【已确认的意图与一级话题】\n${outline1}`;
-    try {
-      researchMemo = await deps.runRole("searchResearch", { system: researchSystem, user: researchUser });
-    } catch (e) {
-      console.error(`  ⚠ 联网研究失败,降级为纯模型作答:${(e as Error).message}`);
-      researchMemo = "";
-    }
-  }
-  // 工具函数:有研究备忘录时追加到 base 末尾;没有时原样返回
-  const withSearch = (base: string) => (researchMemo ? `${base}\n\n${researchMemo}` : base);
+    async generation() {
+      if (!artifacts.skeleton) throw new Error("缺少 skeleton，无法生成内容");
+      const researchMemo = artifacts.researchMemo ?? "";
+      const withSearch = (base: string) => (researchMemo ? `${base}\n\n${researchMemo}` : base);
+      const genSystem = buildSystem(deps.loadPrompt, "content-generation", true);
+      const genUser = withSearch(`${userInput}\n\n【已确认的骨架】\n${artifacts.skeleton}`);
+      const markdown = await deps.runRole("contentGeneration", { system: genSystem, user: genUser });
+      return { markdown };
+    },
 
-  // ② 内容组织 →门2(重)：确认三级骨架；门2 支持第三分支「复制大纲」offload
-  const orgSystem = buildSystem(deps.loadPrompt, "content-organization", true);
-  const orgUser = withSearch(`${userInput}\n\n【已确认的范围与意图】\n${outline1}`);
-  let skeleton = await deps.runRole("contentOrganization", { system: orgSystem, user: orgUser });
-  for (;;) {
-    const bundle = buildOutlineBundle({
-      question: userInput,
-      research: researchMemo,
-      skeleton,
-      generation: deps.loadPrompt("content-generation"),
-      styleRules: deps.loadPrompt("style-rules"),
-      drawingRules: deps.loadPrompt("drawing-rules-ascii"),
-    }, deps.bundleResearchMode ?? "digest");
-    const reply = await deps.gate("门2 · 确认骨架", skeleton, bundle);
-    if (reply === "") break; // 通过，继续内容生成
-    if (reply === COPY_OUTLINE_SIGNAL || reply === "copy" || reply === "复制大纲") {
-      // offload 分支：建空白文档 + 入索引 + 结束（跳过内容生成/审核/画图）
-      if (!deps.publishBlank) throw new Error("publishBlank 未注入，无法执行复制大纲分支");
-      const url = await deps.publishBlank(placement.title, placement);
-      if (deps.updateIndex) {
-        try { await deps.updateIndex(placement.title, url); }
-        catch (e) { console.error(`  ⚠ 索引更新失败,跳过:${(e as Error).message}`); }
+    async review() {
+      if (!artifacts.markdown || !artifacts.skeleton) throw new Error("缺少 markdown/skeleton，无法审核");
+      const reviewSystem = buildSystem(deps.loadPrompt, "content-review", false);
+      const genSystem = buildSystem(deps.loadPrompt, "content-generation", true);
+      const researchMemo = artifacts.researchMemo ?? "";
+      const withSearch = (base: string) => (researchMemo ? `${base}\n\n${researchMemo}` : base);
+      const genUser = withSearch(`${userInput}\n\n【已确认的骨架】\n${artifacts.skeleton}`);
+      let markdown = artifacts.markdown;
+      for (let i = 0; i < maxRetries; i++) {
+        const verdict = await deps.runRole("contentReview", {
+          system: reviewSystem,
+          user: `【骨架】\n${artifacts.skeleton}\n\n【正文】\n${markdown}`,
+        });
+        if (/^\s*PASS/.test(verdict)) break;
+        deps.onReviewFeedback?.(verdict);
+        markdown = await deps.runRole("contentGeneration", {
+          system: genSystem,
+          user: `${genUser}\n\n【上一版正文】\n${markdown}\n\n【审核问题】\n${verdict}\n\n请修补后重新输出完整正文。`,
+        });
       }
-      return { kind: "outline_copied", url, bundle, feedbacks };
-    }
-    // 修改意见：重跑内容组织（保持原门迭代语义）
-    collect({ gate: "门2 · 确认骨架", feedback: reply });
-    const user = `${orgUser}\n\n【上一版产出】\n${skeleton}\n\n【使用者修改意见】\n${reply}\n\n请据此修改后重新输出(保持同样的格式)。`;
-    skeleton = await deps.runRole("contentOrganization", { system: orgSystem, user });
-  }
+      return { markdown };
+    },
 
-  // ③ 内容生成(输入含骨架 + 搜索结果;maxTokens=32000 所以必须用 streaming)
-  const genSystem = buildSystem(deps.loadPrompt, "content-generation", true);
-  const genUser = withSearch(`${userInput}\n\n【已确认的骨架】\n${skeleton}`);
-  let markdown = await deps.runRole("contentGeneration", { system: genSystem, user: genUser });
+    async publish() {
+      if (!artifacts.markdown || !artifacts.placement) throw new Error("缺少 markdown/placement，无法发布");
+      const url = await deps.publish(artifacts.markdown, artifacts.placement);
+      return { url };
+    },
 
-  // ④ 内容审核:对照骨架检查;FAIL 打回③重生成,最多 maxRetries 次
-  const reviewSystem = buildSystem(deps.loadPrompt, "content-review", false);
-  for (let i = 0; i < maxRetries; i++) {
-    const verdict = await deps.runRole("contentReview", {
-      system: reviewSystem,
-      user: `【骨架】\n${skeleton}\n\n【正文】\n${markdown}`,
-    });
-    if (/^\s*PASS/.test(verdict)) break; // 通过,退出审核循环
-    deps.onReviewFeedback?.(verdict); // 把审核意见推给前端（问题6）
-    // 把审核问题拼进 user,让生成 agent 针对性修补
-    markdown = await deps.runRole("contentGeneration", {
-      system: genSystem,
-      user: `${genUser}\n\n【上一版正文】\n${markdown}\n\n【审核问题】\n${verdict}\n\n请修补后重新输出完整正文。`,
-    });
-  }
+    async updateIndex() {
+      if (!deps.updateIndex || !artifacts.url || !artifacts.markdown) return;
+      const title = extractTitle(artifacts.markdown, userInput);
+      try { await deps.updateIndex(title, artifacts.url); }
+      catch (e) { soft("updateIndex", "索引追加", (e as Error).message); }
+    },
+  };
 
-  const url = await deps.publish(markdown, placement);
-
-  if (deps.updateIndex) {
-    const title = extractTitle(markdown, userInput);
+  for (let i = startIdx; i < STEP_ORDER.length; i++) {
     try {
-      await deps.updateIndex(title, url);
+      await runStep(STEP_ORDER[i]);
     } catch (e) {
-      console.error(`  ⚠ 索引更新失败,跳过:${(e as Error).message}`);
+      if (e instanceof StepExitSignal) return e.result;
+      throw e;
     }
   }
 
-  return { kind: "single", url, markdown, skeleton, feedbacks };
+  return {
+    kind: "single",
+    url: artifacts.url!,
+    markdown: artifacts.markdown ?? "",
+    skeleton: artifacts.skeleton ?? "",
+    feedbacks,
+  };
+}
+
+/** 内部 sentinel：step 想提前返回 PipelineResult 时抛这个，runPipelineFrom 捕获后直接返回 */
+class StepExitSignal extends Error {
+  constructor(public result: PipelineResult) {
+    super("StepExitSignal");
+    this.name = "StepExitSignal";
+  }
 }

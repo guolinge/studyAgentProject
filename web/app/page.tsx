@@ -20,7 +20,7 @@ import StepsSidebar from "@/components/StepsSidebar";
 import GateViewer from "@/components/GateViewer";
 import StreamingCard from "@/components/StreamingCard";
 import SettingsModal from "@/components/SettingsModal";
-import { startRun, openEventStream, submitGate, refreshFolderTree, getRunDetail } from "@/lib/api";
+import { startRun, openEventStream, submitGate, refreshFolderTree, getRunDetail, retryFromStep } from "@/lib/api";
 import { getSettings } from "@/lib/settingsApi";
 import { renderMarkdown } from "@/lib/markdown";
 import type { PipelineEvent, GateEvent, HistoryItem, StepStat } from "@/lib/types";
@@ -71,7 +71,8 @@ type Action =
   | { type: "CLEAR_VIEW" }
   | { type: "SAVE_BUNDLE"; bundle: string }
   | { type: "SET_RUN_STEPS"; steps: StepStat[] }
-  | { type: "STEP_TIMING"; label: string; durationMs: number };
+  | { type: "STEP_TIMING"; label: string; durationMs: number }
+  | { type: "RETRY" };
 
 function reducer(state: State, action: Action): State {
   switch (action.type) {
@@ -140,6 +141,8 @@ function reducer(state: State, action: Action): State {
       return { ...state, runSteps: action.steps };
     case "STEP_TIMING":
       return { ...state, stepTimings: { ...state.stepTimings, [action.label]: action.durationMs } };
+    case "RETRY":
+      return { ...state, status: "running", selectedGate: null };
     default:
       return state;
   }
@@ -294,6 +297,55 @@ export default function Home() {
     }
   }, [state.selectedGate]);
 
+  const handleRetry = useCallback(async (step: string) => {
+    if (!state.runId) return;
+    const runId = state.runId;
+    try {
+      await retryFromStep(runId, step);
+      dispatch({ type: "RETRY" });
+      closeSSERef.current = openEventStream(runId, (event) => {
+        if (event.type === "step_delta") {
+          setStreamingDelta((prev) =>
+            prev?.label === event.label
+              ? { label: event.label, text: prev.text + event.delta }
+              : { label: event.label, text: event.delta },
+          );
+          return;
+        }
+        if (event.type === "step_start") {
+          setStreamingDelta(null);
+          stepStartTimesRef.current.set(event.label, Date.now());
+        }
+        if (event.type === "progress") {
+          setStreamingDelta(null);
+          const start = stepStartTimesRef.current.get(event.label);
+          if (start != null) {
+            dispatch({ type: "STEP_TIMING", label: event.label, durationMs: Date.now() - start });
+          }
+        }
+        if (event.type === "doc_created") {
+          dispatch({ type: "DOC_CREATED", url: event.url, folderName: event.folderName });
+        }
+        dispatch({ type: "EVENT", event });
+        if (event.type === "done") {
+          closeSSERef.current?.();
+          setStreamingDelta(null);
+          dispatch({ type: "DONE" });
+          getRunDetail(runId).then(({ steps }) => {
+            dispatch({ type: "SET_RUN_STEPS", steps });
+          }).catch(() => {});
+        } else if (event.type === "error") {
+          closeSSERef.current?.();
+          setStreamingDelta(null);
+          dispatch({ type: "ERROR" });
+        }
+      });
+    } catch (e) {
+      dispatch({ type: "EVENT", event: { type: "error", message: (e as Error).message } });
+      dispatch({ type: "ERROR" });
+    }
+  }, [state.runId]);
+
   // 拖拽引用：从 dataTransfer 取 { topic, docUrl } 追加到 textarea
   const handleDrop = useCallback((e: React.DragEvent<HTMLTextAreaElement>) => {
     e.preventDefault();
@@ -421,6 +473,19 @@ export default function Home() {
                 {isViewMode ? "拖拽历史条目到输入框以引用" : "Shift+Enter 换行 · Enter 提交 · 可拖拽历史引用"}
               </span>
               <div className="flex gap-2">
+                {state.status === "error" && !isViewMode && (() => {
+                  const errStep = [...state.events].reverse().find((e) => e.type === "step_error" && (e as { recoverable?: boolean }).recoverable);
+                  const step = errStep?.type === "step_error" ? errStep.step : undefined;
+                  if (!step) return null;
+                  return (
+                    <button
+                      onClick={() => handleRetry(step)}
+                      className="px-4 py-2 rounded-lg text-sm text-indigo-600 border border-indigo-300 hover:border-indigo-400 hover:bg-indigo-50 transition-colors bg-white font-medium"
+                    >
+                      ↻ 从失败环节重试
+                    </button>
+                  );
+                })()}
                 {(state.status === "done" || state.status === "error") && !isViewMode && (
                   <button
                     onClick={() => dispatch({ type: "RESET" })}
@@ -555,6 +620,7 @@ export default function Home() {
           stepTimings={isViewMode ? undefined : state.stepTimings}
           selectedGateTitle={state.selectedGate?.title ?? null}
           onSelectGate={handleSelectGate}
+          onRetry={isViewMode ? undefined : handleRetry}
           readOnly={isViewMode}
         />
       </div>
