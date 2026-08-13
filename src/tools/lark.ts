@@ -276,15 +276,16 @@ export function buildBlockInsertAfterArgs(docUrl: string, blockId: string, forma
 
 // ── 末尾追加 ──────────────────────────────────────────────────────────────────
 
-/** 构造 `docs +update --command append` argv;内容从 stdin 读。 */
+/** 构造 `docs +update --mode append` argv;内容从 stdin 读。
+ * lark-cli 1.0.0 把 --command 改成 --mode,--content 改成 --markdown,--doc-format 移除。
+ */
 export function buildAppendToDocArgs(docToken: string): string[] {
   return [
     "docs",
     "+update",
     "--doc", docToken,
-    "--command", "append",
-    "--doc-format", "markdown",
-    "--content", "-",
+    "--mode", "append",
+    "--markdown", "-",
     "--as", "user",
   ];
 }
@@ -306,6 +307,54 @@ export async function larkAppendToDoc(
     throw new Error(`lark-cli 返回非 JSON 输出:${stdout.slice(0, 200)}`);
   }
   if (!parsed.ok) throw new Error(`飞书追加内容失败:${parsed.error?.message ?? "unknown"}`);
+}
+
+/**
+ * 往总索引文档追加一行 `| 标题 | 分类 | 链接 | 日期 |`，链接保留为可点击超链接。
+ *
+ * 为什么不用 larkAppendToDoc：lark-cli docs +update --mode append 把 markdown 当纯文本追加，
+ * `[链接](url)` 不会解析成超链接 block，最终索引里"链接"二字不可点。
+ * 这里直接走 docx block children API，构造带 text_element_style.link 的 text block，
+ * 飞书会把 link 样式保留下来。
+ *
+ * 索引文档根 block 的 block_id 等于 document_id，children 挂在它下面。
+ */
+export async function larkAppendIndexRow(
+  docToken: string,
+  title: string,
+  category: string,
+  url: string,
+  date: string,
+  runner: CliRunner = defaultRunner,
+): Promise<void> {
+  const payload = JSON.stringify({
+    index: -1,
+    children: [{
+      block_type: 2,
+      text: {
+        elements: [
+          { text_run: { content: `| ${title} | ${category} | `, text_element_style: {} } },
+          { text_run: { content: "链接", text_element_style: { link: { url } } } },
+          { text_run: { content: ` | ${date} |`, text_element_style: {} } },
+        ],
+        style: {},
+      },
+    }],
+  });
+  const args = [
+    "api", "POST",
+    `/open-apis/docx/v1/documents/${docToken}/blocks/${docToken}/children`,
+    "--data", payload,
+    "--as", "user",
+  ];
+  const stdout = await runner("lark-cli", args);
+  let parsed: { code?: number; msg?: string };
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    throw new Error(`lark-cli 返回非 JSON 输出:${stdout.slice(0, 200)}`);
+  }
+  if (parsed.code !== 0) throw new Error(`飞书索引追加失败:${parsed.msg ?? `code=${parsed.code}`}`);
 }
 
 /**

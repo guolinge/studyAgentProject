@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-08-02",
+  "updatedAt": "2026-08-13",
   "root": {
     "name": "技术知识库",
     "token": "PxeCf2XCDlnvpcd0VZXcE4M1nsh",
@@ -202,6 +202,11 @@
         "token": "OnWNfGBwllpQ7md0SWjcuUYtnIe",
         "children": [
           {
+            "name": "一些琐碎问题",
+            "token": "NiL5fIRf5ls3NZdY79ycJW7mnmf",
+            "children": []
+          },
+          {
             "name": "表设计",
             "token": "QwdYflWRnlxHmZd1NVlc5r7fnZd",
             "children": []
@@ -259,11 +264,6 @@
             ]
           },
           {
-            "name": "一些琐碎问题",
-            "token": "NiL5fIRf5ls3NZdY79ycJW7mnmf",
-            "children": []
-          },
-          {
             "name": "实操",
             "token": "RTG2f346flzY8sdkVHIci84Qnie",
             "children": []
@@ -300,6 +300,28 @@
         "name": "计算机系统原理",
         "token": "ZWpefGOAqlsZLedbHDkcm2aknMc",
         "children": [
+          {
+            "name": "云服务器",
+            "token": "XRoJffPeNlO0w3d3cm9cT5Exnqd",
+            "children": [
+              {
+                "name": "SSH",
+                "token": "DSIzfDTHRlnJUOdGqd5cLIbOnMd",
+                "children": []
+              }
+            ]
+          },
+          {
+            "name": "分布式系统",
+            "token": "B2tBfPmhClCgocdY6GMcwlsLn2e",
+            "children": [
+              {
+                "name": "Kafka",
+                "token": "IsxbfXOgwl7DAOd2yxpcDS1NnIb",
+                "children": []
+              }
+            ]
+          },
           {
             "name": "操作系统",
             "token": "PL1GfLFwXlxeahdrNcJcfYAEnTe",
@@ -487,22 +509,6 @@
                 ]
               }
             ]
-          },
-          {
-            "name": "云服务器",
-            "token": "XRoJffPeNlO0w3d3cm9cT5Exnqd",
-            "children": [
-              {
-                "name": "SSH",
-                "token": "DSIzfDTHRlnJUOdGqd5cLIbOnMd",
-                "children": []
-              }
-            ]
-          },
-          {
-            "name": "分布式系统",
-            "token": "B2tBfPmhClCgocdY6GMcwlsLn2e",
-            "children": []
           }
         ]
       },
@@ -510,6 +516,11 @@
         "name": "架构与系统设计",
         "token": "Jk06fXUc6lJ5Z8djeVyc6jdSn1f",
         "children": [
+          {
+            "name": "架构设计专题",
+            "token": "MbFbf1d1ZlgcyMd1EnjcIPvAnbc",
+            "children": []
+          },
           {
             "name": "weight专题",
             "token": "LsnMfvCa2lwkDydz2XScJnHCnEb",
@@ -524,11 +535,6 @@
           {
             "name": "数据域专题",
             "token": "WIBgfU3mQlRS1adlRV9c5s6anEe",
-            "children": []
-          },
-          {
-            "name": "架构设计专题",
-            "token": "MbFbf1d1ZlgcyMd1EnjcIPvAnbc",
             "children": []
           }
         ]

@@ -37,6 +37,7 @@ import {
   larkFetchOutline,
   larkBlockInsertAfter,
   larkAppendToDoc,
+  larkAppendIndexRow,
   type SearchHit,
 } from "./tools/lark.js";
 import type { PlacementInfo } from "./orchestrator.js";
@@ -208,9 +209,8 @@ async function main() {
       : async (title: string, url: string) => {
           const date = new Date().toISOString().split("T")[0];
           const category = userInput.length > 20 ? userInput.slice(0, 20) + "…" : userInput;
-          const row = `| ${title} | ${category} | [链接](${url}) | ${date} |\n`;
           console.error("  📑 正在更新总索引…");
-          await larkAppendToDoc(indexDocToken, row);
+          await larkAppendIndexRow(indexDocToken, title, category, url, date);
         };
 
   try {

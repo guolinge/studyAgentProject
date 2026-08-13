@@ -25,12 +25,15 @@ const INTER_REQUEST_DELAY_MS = 300; // 飞书 API 限流保护，每次请求间
 /**
  * 列出 folderToken 下的直接子文件夹，返回 FolderNode[]（children 为空，等待下一层递归填充）。
  *
- * lark-cli drive files list 没有 --type 过滤参数，在代码里按 type===folder 筛选。
+ * lark-cli 没有"列文件夹子项"的子命令封装（drive files 下只有 copy），
+ * 这里直接走通用 api 命令调飞书 open API：GET /open-apis/drive/v1/files?folder_token=...
+ * 在代码里按 type==="folder" 筛掉文件，只留子文件夹。
  * exit 非 0 时 defaultRunner 会把 stderr/stdout 拼进错误信息，这里尝试从中解析
  * 结构化错误（限流、认证失败等），给出更精确的提示。
  */
 async function listChildren(folderToken: string): Promise<FolderNode[]> {
-  const args = ["drive", "files", "list", "--folder-token", folderToken, "--as", "user"];
+  const params = JSON.stringify({ folder_token: folderToken, page_size: 200 });
+  const args = ["api", "GET", "/open-apis/drive/v1/files", "--params", params, "--as", "user", "--page-all"];
   let stdout: string;
   try {
     stdout = await defaultRunner("lark-cli", args);
@@ -56,13 +59,17 @@ async function listChildren(folderToken: string): Promise<FolderNode[]> {
     // 命令不存在或其他非结构化错误
     throw new Error(`lark-cli 不可用：${raw}`);
   }
+  // lark-cli api 的输出就是飞书原始响应：
+  //   { code, msg, data: { files: [{ name, token, type, ... }] } }
+  // code !== 0 表示业务错误（限流、权限不足等）。
   const parsed = JSON.parse(stdout) as {
-    ok?: boolean;
+    code?: number;
+    msg?: string;
     data?: { files?: Array<{ name?: string; token?: string; type?: string }> };
-    error?: { message?: string };
   };
-  if (!parsed.ok) throw new Error(parsed.error?.message ?? "unknown");
-  return (parsed.data?.files ?? [])
+  if (parsed.code !== 0) throw new Error(parsed.msg ?? `飞书 API 错误 code=${parsed.code}`);
+  const files = parsed.data?.files ?? [];
+  return files
     .filter((f) => f.name && f.token && f.type === "folder")
     .map((f) => ({ name: f.name!, token: f.token!, children: [] }));
 }
